@@ -33,6 +33,8 @@ bin=$(swift build -c release --show-bin-path)
 [ -e "$out" ] && trash "$out"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources/skill"
 cp Resources/Info.plist "$app/Contents/Info.plist"
+# agweb version prints it; the "Version" commit made below changes only Info.plist, so this is the code built.
+plutil -insert AgwebCommit -string "$(git rev-parse --short HEAD)" "$app/Contents/Info.plist"
 cp Resources/AppIcon.icns Resources/defuddle.js Resources/defuddle-LICENSE "$app/Contents/Resources/"
 cp skill/SKILL.md "$app/Contents/Resources/skill/"
 cp "$bin/AgwebApp" "$app/Contents/MacOS/agweb"
