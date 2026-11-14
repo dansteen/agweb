@@ -18,6 +18,8 @@ final class BrowserModel {
     @ObservationIgnored var onCloseTab: ((Tab) -> Void)?
     @ObservationIgnored var onCloseWorkspace: ((Workspace) -> Void)?
     @ObservationIgnored var onNewTab: ((Workspace?) -> Void)?
+    /// File ▸ New Workspace: a name and a named profile (nil: fresh); returns why it failed.
+    @ObservationIgnored var onNewWorkspace: ((String, String?) -> String?)?
 
     func display(_ id: Int) {
         displayedTabID = id

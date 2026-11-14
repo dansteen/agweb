@@ -32,6 +32,14 @@ final class Browser {
         model.onCloseTab = { [weak self] tab in self?.closeTab(tab) }
         model.onCloseWorkspace = { [weak self] workspace in self?.closeWorkspace(workspace) }
         model.onNewTab = { [weak self] workspace in self?.newTabFromUser(in: workspace) }
+        model.onNewWorkspace = { [weak self] name, profile in
+            guard let self else { return nil }
+            do {
+                newTabFromUser(in: try existingOrNewWorkspace(named: name, profile: profile))
+                scheduleSave()
+                return nil
+            } catch { return "\(error)" }
+        }
     }
 
     // MARK: Workspaces and tabs

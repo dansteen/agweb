@@ -194,6 +194,39 @@ final class MainWindow: NSObject, NSWindowDelegate {
 
     @objc func newTab(_ sender: Any?) { model.onNewTab?(nil) }
 
+    /// Asks for a name and a profile, then opens the workspace with an empty tab, its address field focused.
+    @objc func newWorkspace(_ sender: Any?) {
+        let taken = Set(model.workspaces.map(\.name))
+        let name = NSTextField(string: (1...).lazy.map { "workspace-\($0)" }.first { !taken.contains($0) }!)
+        let profile = NSPopUpButton()
+        profile.addItem(withTitle: "Fresh profile")
+        profile.addItems(withTitles: Profiles.names.sorted())
+        let fields = NSStackView(views: [name, profile])
+        fields.orientation = .vertical
+        fields.alignment = .leading
+        fields.frame = NSRect(x: 0, y: 0, width: 260, height: 56)
+        name.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        let alert = NSAlert()
+        alert.messageText = "New Workspace"
+        alert.informativeText = "A workspace's tabs share its profile: a named one keeps its logins."
+        alert.accessoryView = fields
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = name
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            let chosen = name.stringValue.trimmingCharacters(in: .whitespaces)
+            let error = chosen.isEmpty ? "A workspace needs a name."
+                : taken.contains(chosen) ? "\(chosen) is open already."
+                : self.model.onNewWorkspace?(chosen, profile.indexOfSelectedItem == 0 ? nil : profile.titleOfSelectedItem)
+            guard let error else { return }
+            let failed = NSAlert()
+            failed.messageText = "Can't create the workspace"
+            failed.informativeText = error
+            failed.beginSheetModal(for: self.window)
+        }
+    }
+
     @objc func closeTab(_ sender: Any?) {
         if let tab = model.displayedTab { model.onCloseTab?(tab) } else { window.orderOut(nil) }
     }

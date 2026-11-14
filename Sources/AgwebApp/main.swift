@@ -91,6 +91,7 @@ private func makeMainMenu(target: MainWindow, settings: SettingsWindow) -> NSMen
     ])
     submenu("File", [
         item("New Tab", #selector(MainWindow.newTab(_:)), "t", to: target),
+        item("New Workspace…", #selector(MainWindow.newWorkspace(_:)), "n", [.command, .shift], to: target),
         item("Open Location…", #selector(MainWindow.openLocation(_:)), "l", to: target),
         .separator(),
         item("Close Tab", #selector(MainWindow.closeTab(_:)), "w", to: target),
