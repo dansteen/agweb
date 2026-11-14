@@ -304,17 +304,65 @@ public enum PageScripts {
     return reply((page.title ? `# ${page.title}\\n\\n` : '') + md(article), false, words(article.content.textContent), words(document.body.innerText));
     """
 
-    // Returns the element's center in CSS pixels (`reveal` brings it into view first), what actually sits there, and
-    // what kind of control it is (some controls open native popups when clicked).
+    // Returns the element's center in CSS pixels (`reveal` brings it into view first), what actually sits there (at
+    // `at`, a point in the top viewport, when given), and what kind of control it is (some controls open native
+    // popups when clicked). `covered` names what would take a click instead, such as a cookie dialog's backdrop.
     public static let locate = find + """
     const el = find(target);
     const r = rectOf(el);
-    const lx = r.local.left + r.width / 2, ly = r.local.top + r.height / 2;
-    const hit = el.getRootNode().elementFromPoint?.(lx, ly) ?? el.ownerDocument.elementFromPoint(lx, ly);
-    const covered = hit && hit !== el && !el.contains(hit) && !hit.contains(el) ? hit.tagName.toLowerCase() : null;
+    // A link wrapped over two lines: its bounding box's middle can sit on the next link, so its biggest line box counts.
+    const rects = [...el.getClientRects()];
+    const box = rects.length > 1 ? rects.reduce((a, b) => a.width * a.height >= b.width * b.height ? a : b) : r.local;
+    const dx = r.x - r.local.left, dy = r.y - r.local.top;
+    const point = typeof at === 'object' && at ? at : null;
+    const lx = point ? point.x - dx : box.left + box.width / 2, ly = point ? point.y - dy : box.top + box.height / 2;
+    // Up through slots and shadow hosts, which contains() stops at.
+    const up = (n) => n.assignedSlot || n.parentElement || n.getRootNode().host;
+    const within = (n, root) => { for (; n; n = up(n)) if (n === root) return true; return false; };
+    // A label passes its clicks to its control: a styled checkbox hides the input under its label's span.
+    const control = (n) => n.closest?.('label')?.control;
+    let hit = el.getRootNode().elementFromPoint?.(lx, ly) ?? el.ownerDocument.elementFromPoint(lx, ly);
+    let cover = hit && !within(hit, el) && !within(el, hit) && control(hit) !== el && control(el) !== hit ? hit : null;
+    // Each document above a same-origin frame must have the frame there, not a backdrop of its own.
+    for (let w = el.ownerDocument.defaultView, x = lx, y = ly; !cover && w.frameElement; w = w.parent) {
+      const f = w.frameElement, b = f.getBoundingClientRect();
+      x += b.left + f.clientLeft;
+      y += b.top + f.clientTop;
+      const above = f.ownerDocument.elementFromPoint(x, y);
+      if (above && !within(above, f) && !within(f, above)) cover = above;
+    }
+    const name = (n) => {
+      let s = n.tagName.toLowerCase() + (n.id ? '#' + n.id : n.classList?.[0] ? '.' + n.classList[0] : '');
+      const role = n.getAttribute('role'), label = n.getAttribute('aria-label');
+      if (role) s += ` role=${role}`;
+      if (label) s += ` "${label.trim().slice(0, 40)}"`;
+      return `<${s}>`;
+    };
+    const describe = (n) => {
+      let s = name(n);
+      const owner = !n.id && n.parentElement?.closest('[id]');
+      if (owner) s += ` in #${owner.id}`;
+      // A backdrop is often its modal's sibling, so a modal on screen counts too; never one the target is in.
+      const shown = (d) => {
+        const b = d.getBoundingClientRect();
+        return !d.closest('[aria-hidden=true]') && d.checkVisibility({ opacityProperty: true, visibilityProperty: true })
+          && b.width && b.height && b.bottom > 0 && b.top < innerHeight;
+      };
+      const mine = (d) => d && !within(el, d) ? d : null;
+      const dialog = mine(n.closest('[role=dialog], [role=alertdialog], [aria-modal=true], dialog'))
+        ?? [...n.ownerDocument.querySelectorAll('[role=alertdialog], [aria-modal=true], dialog:modal')].find((d) => mine(d) && shown(d));
+      if (dialog) {
+        const title = dialog.getAttribute('aria-label') || (dialog.getAttribute('aria-labelledby') || '').split(/\\s+/)
+          .map((id) => id && n.ownerDocument.getElementById(id)?.textContent.trim()).filter(Boolean).join(' ')
+          || dialog.querySelector('h1, h2, h3, [role=heading]')?.textContent.trim();
+        s += title ? `; dialog "${title.replace(/\\s+/g, ' ').slice(0, 60)}" is open` : '; a dialog is open';
+      }
+      return s;
+    };
+    const covered = cover ? describe(cover) : null;
     const kindOf = (e) => !e ? '' : e.tagName === 'SELECT' ? 'select' : e.tagName === 'INPUT' ? (e.getAttribute('type') || 'text').toLowerCase() : e.tagName.toLowerCase();
     const kind = kindOf(el), hitKind = kindOf(hit);
-    return JSON.stringify({ x: r.x + r.width / 2, y: r.y + r.height / 2, covered, kind, hitKind, width: r.width, height: r.height, viewportWidth: innerWidth, viewportHeight: innerHeight });
+    return JSON.stringify({ x: box.left + box.width / 2 + dx, y: box.top + box.height / 2 + dy, covered, kind, hitKind, width: box.width, height: box.height, viewportWidth: innerWidth, viewportHeight: innerHeight });
     """
 
     /// Agent world: where a Cloudflare challenge's checkbox is, in CSS pixels, or null. The widget (300×65, the box
@@ -325,6 +373,12 @@ public enum PageScripts {
     const r = input?.parentElement?.getBoundingClientRect();
     if (!r || !r.width || !r.height) return null;
     return JSON.stringify({ x: r.left + 21, y: r.top + Math.min(r.height, 65) / 2 });
+    """
+
+    /// Scrolls the element to the middle of the viewport, out from under a sticky header or footer.
+    public static let center = find + """
+    find(target).scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    return 'ok';
     """
 
     /// The element's box in the top viewport, after scrolling it into view, for element screenshots.

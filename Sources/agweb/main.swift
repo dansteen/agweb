@@ -18,7 +18,8 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
                                 (--diff: only what changed since the last snapshot; an element keeps its ref)
   find <text>                   the snapshot lines containing text, with the lines around them (--max-results=20)
   text [target]                 the page's main content (an article) or one element as markdown (--all: the whole page)
-  click <target> [right|middle] native trusted click: the pointer glides there like a person's (--js: element.click())
+  click <target> [right|middle] native trusted click: the pointer glides there like a person's (--js: element.click());
+                                fails if something covers the target, such as a cookie dialog (--force: click anyway)
   dblclick <target>             native double click
   check | uncheck <target>      tick or clear a checkbox, radio or switch (no-op when already so)
   drag <from> <to>              press on one element, move to the other with the button held, release
@@ -88,7 +89,8 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
   version                       this agweb's version and the commit it was built from (also --version); put it in bug reports
 
 --instant                       pointer verbs, scrolling, upload and type act at once instead of at human speed
---timeout=MS                    actions wait this long for their target to show (default 5000; 0: don't wait); wait: 30000
+--timeout=MS                    actions wait this long for their target to show (default 5000) and for anything covering it
+                                to go (default 1000); 0: don't wait; wait: 30000
 --filename=PATH                 snapshot, text, eval, request and response-body: write the answer to a file instead
 --download-dir=DIR              where downloads nobody named go (default $AGWEB_DOWNLOAD_DIR, else .agweb/)
 --raw                           print only the answer (eval's value, a snapshot), strings unquoted
@@ -112,7 +114,7 @@ var positional: [String] = []
 var input = Array(CommandLine.arguments.dropFirst())[...]
 // --headed and --browser are accepted for playwright-cli habits; agweb is always headed WebKit.
 let flags: Set = ["js", "help", "instant", "headed", "full-page", "submit", "raw", "json", "static", "clear", "hide", "diff",
-                  "httpOnly", "secure", "gone", "load", "single-page", "check", "all", "enabled", "version"]
+                  "httpOnly", "secure", "gone", "load", "single-page", "check", "all", "enabled", "version", "force"]
 let valued: Set = ["profile", "workspace", "max-idle", "filename", "size", "filter", "status", "body", "content-type",
                    "header", "domain", "path", "expires", "sameSite", "style", "description", "duration", "browser", "text", "url",
                    "timeout", "color-scheme", "format", "download-dir", "secret-cmd", "secret-file", "max-results"]

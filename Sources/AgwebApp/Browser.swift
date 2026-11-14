@@ -494,7 +494,7 @@ final class Browser {
             return "### Result\n" + text.markdown + "\n" + describe(tab, note: note)
         case "click", "dblclick":
             try await click(tab, target: try arg(0, "target"), button: try MouseButton(args.count > 1 ? args[1] : nil), js: options["js"] != nil,
-                            forUpload: false, instant: instant, clicks: request.command == "dblclick" ? 2 : 1)
+                            forUpload: false, instant: instant, clicks: request.command == "dblclick" ? 2 : 1, refuseCovered: coverPatience(options))
             await tab.settle()
         case "check", "uncheck":
             let target = try arg(0, "target")
@@ -552,7 +552,8 @@ final class Browser {
             }
             await tab.settle()
         case "download":
-            return "### Download\n" + (try await download(tab, target: try arg(0, "target"), to: options["filename"], js: options["js"] != nil, instant: instant)) + "\n" + describe(tab)
+            return "### Download\n" + (try await download(tab, target: try arg(0, "target"), to: options["filename"], js: options["js"] != nil, instant: instant,
+                                                         refuseCovered: coverPatience(options))) + "\n" + describe(tab)
         case "fill", "select":
             let secret = options["secret"] != nil
             if secret { secrets.insert(try arg(1, "text")) }
@@ -715,11 +716,11 @@ final class Browser {
     }
 
     /// Clicks and waits for the download the click starts; returns the saved path.
-    private func download(_ tab: Tab, target: String, to path: String?, js: Bool, instant: Bool) async throws -> String {
+    private func download(_ tab: Tab, target: String, to path: String?, js: Bool, instant: Bool, refuseCovered: Double?) async throws -> String {
         tab.downloadPath = path.map { URL(fileURLWithPath: $0) }
         defer { tab.downloadPath = nil }
         let started = tab.downloadsStarted, ended = tab.downloadsEnded.count
-        try await click(tab, target: target, button: .left, js: js, forUpload: false, instant: instant)
+        try await click(tab, target: target, button: .left, js: js, forUpload: false, instant: instant, refuseCovered: refuseCovered)
         for _ in 0..<100 where tab.downloadsStarted == started { try await Task.sleep(for: .milliseconds(100)) }
         guard tab.downloadsStarted > started else { throw Failure("no download started within 10 s of clicking \(target)") }
         for _ in 0..<1200 where tab.downloadsEnded.count == ended { try await Task.sleep(for: .milliseconds(100)) }
@@ -979,7 +980,10 @@ final class Browser {
     private static let pickerKinds: Set = ["select", "date", "time", "datetime-local", "month", "week", "color"]
     private static let pickerKeys: Set = ["space", " ", "enter", "arrowup", "arrowdown", "arrowleft", "arrowright"]
 
-    private func click(_ tab: Tab, target: String, button: MouseButton, js: Bool, forUpload: Bool, instant: Bool, clicks: Int = 1) async throws {
+    /// `refuseCovered`: fail, after waiting up to that many seconds, rather than click something covering the
+    /// target; nil clicks anyway with an event, for controls styled over their native input (checkboxes, uploads).
+    private func click(_ tab: Tab, target: String, button: MouseButton, js: Bool, forUpload: Bool, instant: Bool, clicks: Int = 1,
+                       refuseCovered: Double? = nil) async throws {
         if js {
             _ = try await tab.call(PageScripts.jsClick, ["target": target])
             return
@@ -998,8 +1002,39 @@ final class Browser {
             }
             throw Failure("\(target) has no size on screen; snapshot again or use --js")
         }
-        let (point, landed) = try await glide(tab, onto: target, from: spot, instant: instant)
-        if let covered = landed.covered { tab.events.append("click target was covered by <\(covered)>") }
+        var (point, landed) = try await glide(tab, onto: target, from: spot, instant: instant)
+        // A checkbox, radio or file input is usually hidden under its own styled box, which passes the click on.
+        if let patience = refuseCovered, !["checkbox", "radio", "file"].contains(spot.kind) {
+            // As Playwright does: never click what would land on something else, such as a cookie dialog's
+            // backdrop. Scroll once in case a sticky header covers it, and wait out an overlay that is going away;
+            // the page may have moved the target meanwhile.
+            let deadline = ProcessInfo.processInfo.systemUptime + patience
+            var rescrolled = false, waited = false
+            while true {
+                if let cover = try await coverAt(tab, target, point) {
+                    if !rescrolled {
+                        rescrolled = true
+                        _ = try await tab.call(PageScripts.center, ["target": target])
+                        (point, landed) = try await glide(tab, onto: target, from: try await locate(tab, target, scroll: false), instant: instant)
+                        continue
+                    }
+                    guard ProcessInfo.processInfo.systemUptime < deadline else {
+                        throw Failure("\(target) is covered by \(cover), which would get the click. Close it if it is a banner or dialog, wait if "
+                                      + "the page is loading, or click the element by script with --js (--force clicks the spot anyway)")
+                    }
+                    waited = true
+                    try await Task.sleep(for: .milliseconds(100))
+                    continue
+                }
+                guard waited else { break }
+                waited = false
+                let now = try await locate(tab, target, scroll: false)
+                if CGRect(x: now.center.x - now.size.width / 2, y: now.center.y - now.size.height / 2, width: now.size.width, height: now.size.height).contains(point) { break }
+                (point, landed) = try await glide(tab, onto: target, from: now, instant: instant)
+            }
+        } else if let covered = try await coverAt(tab, target, point) {
+            tab.events.append("click target was covered by \(covered)")
+        }
         if !instant { try await Task.sleep(for: .seconds(tab.motion.dwell())) }
         if button == .right { suppressMenus(tab) }
         for count in 1...clicks {
@@ -1069,11 +1104,23 @@ final class Browser {
         return CGSize(width: size["viewportWidth"] ?? 0, height: size["viewportHeight"] ?? 0)
     }
 
+    /// What sits over the target at `point` and would take a click there, or nil.
+    private func coverAt(_ tab: Tab, _ target: String, _ point: CGPoint) async throws -> String? {
+        let json = try await tab.call(PageScripts.locate, ["target": target, "at": ["x": point.x, "y": point.y]])
+        return (try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])?["covered"] as? String
+    }
+
+    /// How long a click waits for a covering element to go before refusing: --timeout if given, else 1 s; nil
+    /// (click anyway) with --force.
+    private func coverPatience(_ options: [String: String]) -> Double? {
+        options["force"] != nil ? nil : options["timeout"].flatMap(Double.init).map { max(0, $0) / 1000 } ?? 1
+    }
+
     private func hover(_ tab: Tab, target: String, instant: Bool) async throws {
         let spot = try await locate(tab, target, instant: instant)
         if spot.size.width == 0 || spot.size.height == 0 { throw Failure("\(target) has no size on screen; snapshot again") }
         let landed = try await glide(tab, onto: target, from: spot, instant: instant).spot
-        if let covered = landed.covered { tab.events.append("hover target is covered by <\(covered)>") }
+        if let covered = landed.covered { tab.events.append("hover target is covered by \(covered)") }
     }
 
     /// Puts the pointer on the target and returns where it is and the target's latest position. A glide takes

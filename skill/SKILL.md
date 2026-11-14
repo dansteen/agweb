@@ -178,6 +178,7 @@ Use `--instant` for pointer verbs and `type` when looking human doesn't matter. 
 - `timed out after N s waiting for ...`: the condition never held; check `### Page` for where you are, `snapshot`, `console error`. `--timeout is milliseconds, up to 600000` means the value was over the cap.
 - `select opens a native picker; use: agweb select ...` / `fill ... is not a field`: see dropdowns.
 - `has no size on screen`: the element is collapsed; snapshot again, or `click --js` for a scripted click.
+- `is covered by <...>, which would get the click`: nothing was clicked. A cookie banner or dialog: close or accept it (`find` its button), then click again. A spinner: `wait` for it to go. `--js` clicks the element by script; `--force` clicks the spot anyway, landing on the cover.
 - Logged out in a new workspace with the same profile: the site keeps its token in sessionStorage, which belongs to a tab, not the profile (a restart keeps it, a new workspace starts without it); log in again there.
 - `workspace X already uses fresh profile; close it first`: profiles are fixed at `open`.
 - `no file chooser opened` / `no download started within 10 s`: target the input or the button that really opens it; snapshot again.

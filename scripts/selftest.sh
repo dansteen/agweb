@@ -536,10 +536,54 @@ check '"--y teh"' -w alpha eval 'q.value'
 fails "missing <target>" -w alpha click
 # A port nobody listens on (port 1 is one WebKit refuses outright, and macOS 26's WebKit answers that with about:blank).
 dead=$(/usr/bin/python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
-fails "navigation failed" -w alpha goto "http://127.0.0.1:$dead/"
+fails "navigation failed.* at http://127.0.0.1:$dead/" -w alpha goto "http://127.0.0.1:$dead/"
 fails "boom" -w alpha eval '() => { throw new Error("boom") }'
 fails "is not a field" -w alpha fill '#b' x
 fails "no workspace\|no session" -w nobody snapshot
+
+echo "== a click on a covered target fails and names the cover, as Playwright's does; --force clicks anyway"
+check "Title: agweb test" -w alpha goto "$u"
+check "Page" -w alpha eval "() => { document.body.insertAdjacentHTML('beforeend', '<div id=\"ov\"><div class=\"dark-filter\" style=\"position:fixed;inset:0;z-index:9\"></div><div role=\"dialog\" aria-modal=\"true\" aria-label=\"Cookie Settings\" style=\"position:fixed;bottom:0;right:0;width:40px;height:40px;z-index:10\">x</div></div>') }"
+fails 'covered by <div.dark-filter> in #ov; dialog "Cookie Settings" is open' -w alpha click '#b'
+fails 'covered by <div.dark-filter>' -w alpha click '#b' --timeout=0
+check '^0$' -w alpha --raw eval 'log.length'
+check 'hover target is covered by <div.dark-filter>' -w alpha hover '#b'
+check "Page" -w alpha click '#b' --force
+check '^0$' -w alpha --raw eval 'log.length'
+# An overlay on its way out is waited for.
+check "Page" -w alpha eval "() => { setTimeout(() => ov.remove(), 400) }"
+check "Page" -w alpha click '#b'
+check '^1$' -w alpha --raw eval 'log.length'
+# A sticky header over the target: scrolled out from under it.
+check "Page" -w alpha eval "() => { document.body.insertAdjacentHTML('beforeend', '<div id=\"hdr\" style=\"position:fixed;top:0;left:0;right:0;height:40px;z-index:9;background:#fff\"></div>'); scrollTo(0, b.getBoundingClientRect().top + scrollY - 10) }"
+check "Page" -w alpha click '#b'
+check '^2$' -w alpha --raw eval '() => { hdr.remove(); return log.length }'
+# Not covers: a label's styled box over its checkbox, a slotted child over a shadow button.
+check "Page" -w alpha eval "() => { document.body.insertAdjacentHTML('afterbegin', '<label style=\"position:relative\"><input type=\"checkbox\" id=\"cb2\" style=\"opacity:0;position:absolute;left:0;margin:0\"><span style=\"display:inline-block;position:relative;width:20px;height:20px;background:#333\"></span> Agree</label><my-btn id=\"sb\"><span>Slotted</span></my-btn>'); const root = sb.attachShadow({ mode: 'open' }); root.innerHTML = '<button>Shadow <slot></slot></button>'; root.querySelector('button').onclick = () => sb.dataset.hit = 'yes' }"
+check "Page" -w alpha click '#cb2'
+check '^true$' -w alpha --raw eval 'cb2.checked'
+check "Page" -w alpha click 'role=button[name="Shadow"]'
+check '^yes$' -w alpha --raw eval 'sb.dataset.hit'
+# check, uncheck and upload click styled controls over their native input, so a cover only warns there.
+check "Page" -w alpha eval "() => { document.body.insertAdjacentHTML('afterbegin', '<div style=\"position:relative\"><input type=\"checkbox\" id=\"cb3\" style=\"opacity:0;position:absolute;left:0;margin:0\"><span onclick=\"cb3.click()\" style=\"display:inline-block;position:relative;width:20px;height:20px;background:#333\"></span></div>') }"
+check "click target was covered by <span" -w alpha check '#cb3'
+check '^true$' -w alpha --raw eval 'cb3.checked'
+# A click on the checkbox itself is no refusal either: its styled box takes it.
+check "click target was covered by <span" -w alpha click '#cb3'
+check '^false$' -w alpha --raw eval 'cb3.checked'
+check "Title: agweb test" -w alpha goto "$u"
+# A backdrop in the top page over a button in a frame; a paced dblclick checks the point it aims at.
+check "Page" -w alpha eval "() => { log = []; const d = document.createElement('div'); d.id = 'veil'; d.style = 'position:fixed;inset:0;z-index:9'; document.body.append(d); fr.scrollIntoView({ block: 'center' }) }"
+fails 'covered by <div#veil>' -w alpha click 'role=button[name="inner"]'
+AGWEB_INSTANT= fails 'covered by <div#veil>' -w alpha dblclick '#b'
+fails 'covered by <div#veil>' -w alpha download '#dl'
+check '^0$' -w alpha --raw eval '() => { veil.remove(); return log.length }'
+# A dialog the target is in is never blamed; a hidden one (aria-hidden on its wrapper) is not open.
+check "Page" -w alpha eval "() => { document.body.insertAdjacentHTML('afterbegin', '<div aria-hidden=\"true\"><div role=\"dialog\" aria-modal=\"true\" aria-label=\"Hidden one\">kept</div></div><div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"dt1\" id=\"dlg\"><h2 id=\"dt1\">Edit profile</h2><button id=\"save\">Save</button><div id=\"toast\" style=\"position:fixed;inset:0;z-index:9\"></div></div>'); scrollTo(0, 0) }"
+fails 'covered by <div#toast>; dialog "Edit profile" is open' -w alpha click '#b' --timeout=0
+check "Page" -w alpha eval "() => { toast.remove(); document.body.insertAdjacentHTML('beforeend', '<div id=\"toast2\" style=\"position:fixed;inset:0;z-index:9\"></div>') }"
+fails 'covered by <div#toast2>, which would get the click' -w alpha click '#save' --timeout=0
+check "Title: agweb test" -w alpha goto "$u"
 
 echo "== frames, accessible names and controls inside controls"
 check 'combobox "Shipping speed" \[expanded\] \[value="Express"\]' -w alpha snapshot

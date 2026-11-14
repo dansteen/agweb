@@ -672,7 +672,9 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
             if navigation === expected { expected = nil }
             return
         }
-        if isExpected(navigation) { finishLoad(Failure("navigation failed: \(error.localizedDescription)")) }
+        // As Playwright's does, the error names the URL that failed, which after a redirect is not the one asked for.
+        let url = ((error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.absoluteString
+        if isExpected(navigation) { finishLoad(Failure("navigation failed: \(error.localizedDescription)" + (url.map { " at \($0)" } ?? ""))) }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
