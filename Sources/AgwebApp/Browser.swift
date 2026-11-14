@@ -277,7 +277,18 @@ final class Browser {
                                                                    options: [.sortedKeys, .withoutEscapingSlashes]), as: UTF8.self)
             }
             if model.workspaces.isEmpty { return "no workspaces" }
-            return model.workspaces.map { "- \($0.name) (\(Self.describe(profile: $0.profile)), \($0.tabs.count) tabs)" }.joined(separator: "\n")
+            // A tree: each profile, the workspaces on it, their tabs. A workspace has one profile for its life.
+            let named = Dictionary(grouping: model.workspaces.filter { $0.profile != nil }, by: { $0.profile! })
+            let groups = named.keys.sorted().map { ("profile \($0)", named[$0]!) }
+                + [("fresh profile (each workspace its own, in memory)", model.workspaces.filter { $0.profile == nil })]
+            return groups.filter { !$0.1.isEmpty }.map { title, workspaces in
+                title + "\n" + workspaces.map { workspace in
+                    "  - \(workspace.name) (\(workspace.tabs.count) tab\(workspace.tabs.count == 1 ? "" : "s"))" + workspace.tabs.enumerated().map { index, tab in
+                        let current = tab.id == workspace.currentID ? " (current)" : ""
+                        return "\n    - \(index):\(current) [\(tab.currentTitle)](\(tab.currentURL))" + (tab.state == "visible" ? "" : " (\(tab.state))")
+                    }.joined()
+                }.joined(separator: "\n")
+            }.joined(separator: "\n")
         case "close-all":
             var lines: [String] = []
             for workspace in model.workspaces {

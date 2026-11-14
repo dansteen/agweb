@@ -665,8 +665,9 @@ check "Page" -w beta eval "() => console.log('before-reload')"
 check "Page" -w beta reload
 lacks "before-reload" -w beta console
 check "Title" -w beta show
-check "beta (profile selftest-shared" list
-check "eph1 (fresh profile" list
+check "^profile selftest-shared$" list
+check "^  - beta (" list
+check "^  - eph1 (" list
 check "selftest-shared: beta, gamma" profile-list
 fails "in use by beta, gamma" profile-delete selftest-shared
 # Not `AGWEB_ROOT=... run`: sh keeps an assignment made before a function call.
@@ -712,8 +713,8 @@ check '^loaded$' -w eph1 --raw eval "() => fetch('/index.html?blockapi').then(()
 check '^blocked$' -w beta --raw eval "() => fetch('/index.html?blockapi').then(() => 'loaded', () => 'blocked')"
 check '"dashboard":true' list --json
 check "dashboard hidden" dashboard --hide
-check "beta (profile selftest-shared" list
-check "eph1 (fresh profile" list
+check "^profile selftest-shared$" tree
+check "^fresh profile" tree
 check "index.html?again" -w beta tab-list
 check 'button "Press me"' -w beta snapshot
 # Cleared (a logout) is saved too, so the next restart doesn't log back in.
