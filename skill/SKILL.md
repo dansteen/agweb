@@ -21,6 +21,7 @@ agweb -w fix-login close # when done; otherwise the workspace reopens after a re
 
 - Name the workspace uniquely: another agent may be running the same kind of task, and two agents in one workspace act on each other's tabs. Prefer an id you already have (ticket `PROJ-123`, branch, PR number), else a task name plus a random suffix (`fix-login-7f3a`). Run `agweb list` first; a name already listed belongs to someone else.
 - Pass `-w` on every call, or `export AGWEB_WORKSPACE=fix-login`. A shell function `a() { agweb -w fix-login "$@"; }` works; a variable holding `agweb -w fix-login` does not in zsh. Never touch a workspace you didn't open (`agweb list` shows them all).
+- "Clean up" or "close the tabs" means yours: `agweb -w fix-login close`, or `tab-close` for one tab. Other agents' workspaces only when the person names them.
 - `goto`, `go-back`, `reload` wait for the new page; `goto` and `open` also report `redirected to ...` under Events when a login or SSO bounce moved you, to another host or path. `eval "location.href=..."` tells you nothing.
 - Keep stderr. Errors say why and exit 1: an ambiguous target, a timeout over the cap, a misspelled option. Never `2>/dev/null`; chain dependent steps with `&&`, not `;`.
 - Actions (not `upload`) wait up to 5 s for their target to show (`--timeout=MS`, 0 to skip; fields only need to exist), so `click` right after the page changed is fine; `wait` for anything slower. A ref from an earlier page fails with `ref eN not found`.

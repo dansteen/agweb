@@ -73,8 +73,9 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
   ask <message> [target]        hand the tab to the person: a bar with Done over it, without taking focus; returns on
                                 Done, or when target/--text/--url appears (--timeout, default 600000 ms, up to 1 h)
   close                         close the workspace; a named profile keeps its logins
-  list                          workspaces
-  close-all                     close every workspace
+  list                          every agent's workspaces, not just yours
+  close-all                     DANGEROUS: closes every agent's workspaces and their tabs, not just yours; only when
+                                the person asks for all of them. To clean up your own: agweb -w NAME close
   dashboard [--hide]            show (or hide) every tab at once in the window, as the person's ⌘D does;
                                 --filename=grid.png also saves a picture of it
   profile-list                  named profiles and the workspaces using them
