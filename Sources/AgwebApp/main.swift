@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             FileHandle.standardError.write(Data("cannot listen on \(path): \(error)\n".utf8))
             exit(1)
         }
-        NSApp.mainMenu = makeMainMenu(target: browser.mainWindow, settings: settings)
+        NSApp.mainMenu = makeMainMenu(target: browser.mainWindow, settings: settings, about: self)
         browser.mainWindow.showQuietly()
     }
 
@@ -59,10 +59,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         unlink(Agweb.socketPath)
     }
+
+    /// The standard About panel with a link to the repo; the commit stamped into the bundle as `AgwebCommit`, when
+    /// there is one, replaces the build number in the version's parenthetical.
+    @objc func showAbout(_ sender: Any?) {
+        var options: [NSApplication.AboutPanelOptionKey: Any] = [:]
+        let repo = "https://github.com/paul-nameless/agweb"
+        if let url = URL(string: repo) {
+            options[.credits] = NSAttributedString(string: repo, attributes: [
+                .link: url,
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            ])
+        }
+        if let commit = Bundle.main.infoDictionary?["AgwebCommit"] as? String, !commit.isEmpty, commit != "unknown" {
+            options[.version] = commit
+        }
+        NSApp.orderFrontStandardAboutPanel(options: options)
+    }
 }
 
 @MainActor
-private func makeMainMenu(target: MainWindow, settings: SettingsWindow) -> NSMenu {
+private func makeMainMenu(target: MainWindow, settings: SettingsWindow, about: AppDelegate) -> NSMenu {
     let main = NSMenu()
     @discardableResult
     func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenu {
@@ -82,6 +99,8 @@ private func makeMainMenu(target: MainWindow, settings: SettingsWindow) -> NSMen
     }
 
     submenu("Agweb", [
+        item("About Agweb", #selector(AppDelegate.showAbout(_:)), "", to: about),
+        .separator(),
         item("Settings…", #selector(SettingsWindow.show(_:)), ",", to: settings),
         .separator(),
         item("Hide Agweb", #selector(NSApplication.hide(_:)), "h"),
