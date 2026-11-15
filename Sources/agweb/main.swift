@@ -85,6 +85,8 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
                                 only (Settings switches every workspace); pages opened directly always load
   install-cli [--check]         link /usr/local/bin/agweb to this app's CLI (also Help menu); --check says what is there
   install-skill [--check]       link the agent skill for Claude Code and Codex to this app's (also Help menu)
+  update [--check]              install the latest release from GitHub and restart, every workspace reopening
+                                (--check: only say whether one is out); agweb never updates by itself
   quit                          stop agweb
   version                       this agweb's version and the commit it was built from (also --version); put it in bug reports
 
@@ -351,7 +353,7 @@ if !isServing(socket) {
         let launch = Process()
         launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         // The selftest's: a shorter visible time after a command, install targets away from the person's, a local filter list.
-        let passed = ["AGWEB_AWAKE_SECONDS", "AGWEB_HOME", "AGWEB_CLI_LINK", "AGWEB_ADBLOCK_LISTS"].flatMap { name in env[name].map { ["--env", "\(name)=\($0)"] } ?? [] }
+        let passed = ["AGWEB_AWAKE_SECONDS", "AGWEB_HOME", "AGWEB_CLI_LINK", "AGWEB_ADBLOCK_LISTS", "AGWEB_UPDATE_FEED"].flatMap { name in env[name].map { ["--env", "\(name)=\($0)"] } ?? [] }
         launch.arguments = ["-g", "-n", "--env", "AGWEB_ROOT=\(Agweb.root.path)"] + passed + ["-a", app]
         try launch.run()
         launch.waitUntilExit()

@@ -39,6 +39,11 @@ u="http://127.0.0.1:$port/index.html"
 # Ad blocking is on by default; this instance compiles a local list instead of fetching uBlock Origin's.
 printf '||127.0.0.1^*blockapi\n/blockme.png\n' >"$dir/blocklist.txt"
 export AGWEB_ADBLOCK_LISTS="http://127.0.0.1:$port/blocklist.txt"
+# Check for Updates reads this release instead of GitHub's; the checks below rewrite it.
+release() { printf '{"tag_name":"v%s","html_url":"http://127.0.0.1:%s/","body":"notes","assets":[{"name":"Agweb.dmg","browser_download_url":"http://127.0.0.1:%s/Agweb.dmg"}]}' "$1" "$port" "$port" >"$dir/release.json"; }
+version=$(plutil -extract CFBundleShortVersionString raw "$(dirname "$(realpath "$agweb")")/../Info.plist")
+release "$version"
+export AGWEB_UPDATE_FEED="http://127.0.0.1:$port/release.json"
 # Downloads and files nobody named land in the test's folder: the checkout may sit under ~/Downloads, which would
 # make every rebuilt (newly signed) test app ask for access to it.
 export AGWEB_DOWNLOAD_DIR="$dir/downloads"
@@ -540,6 +545,13 @@ fails "navigation failed.* at http://127.0.0.1:$dead/" -w alpha goto "http://127
 fails "boom" -w alpha eval '() => { throw new Error("boom") }'
 fails "is not a field" -w alpha fill '#b' x
 fails "no workspace\|no session" -w nobody snapshot
+
+echo "== update only says what is out unless asked to install"
+check "agweb $version is the latest" update --check
+release 99.0.0
+check "agweb 99.0.0 is out (you have $version): http://127.0.0.1:$port/" update --check
+check "install it with: agweb update" update --check
+fails "did you mean update" upgrade
 
 echo "== a click on a covered target fails and names the cover, as Playwright's does; --force clicks anyway"
 check "Title: agweb test" -w alpha goto "$u"

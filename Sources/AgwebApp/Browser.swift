@@ -151,6 +151,14 @@ final class Browser {
     private(set) var preparedToQuit = false
 
     /// Finishes every recording, since an MP4 without its index is unplayable, and saves session cookies.
+    /// Quits for the swapped-in app to start; returns what quitting saved (videos).
+    func restartAfterUpdate() async throws -> [String] {
+        try Updater.relaunchAfterExit()
+        let videos = await prepareToQuit()
+        NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0.2)
+        return videos
+    }
+
     func prepareToQuit() async -> [String] {
         var videos: [String] = []
         for workspace in model.workspaces { videos += await describeStop(workspace) }
@@ -330,6 +338,15 @@ final class Browser {
             guard users.isEmpty else { throw Failure("profile \(name) is in use by \(users.joined(separator: ", ")); close them first") }
             try await Profiles.delete(name)
             return "profile \(name) deleted"
+        case "update":
+            let release = try await Updater.latest()
+            guard Version.isNewer(release.version, than: Updater.current) else { return "agweb \(Updater.current) is the latest" }
+            if options["check"] != nil {
+                return "agweb \(release.version) is out (you have \(Updater.current)): \(release.page.absoluteString)\n"
+                    + (Updater.blocker() ?? "install it with: agweb update")
+            }
+            try await Updater.install(release)
+            return (["updated to \(release.version); agweb restarts and reopens every workspace"] + (try await restartAfterUpdate())).joined(separator: "\n")
         case "quit":
             let videos = await prepareToQuit()
             // Not from a main-queue block: terminate would spin the run loop inside it, starving the main queue.
