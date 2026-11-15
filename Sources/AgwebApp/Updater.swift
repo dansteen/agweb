@@ -46,7 +46,7 @@ enum Updater {
         }
         let bundle = Bundle.main.bundleURL
         if bundle.path.contains("/AppTranslocation/") || !FileManager.default.isWritableFile(atPath: bundle.deletingLastPathComponent().path) {
-            return "can't replace \(bundle.path); move Agweb to Applications (or a folder you can write) first"
+            return "can't replace \(bundle.path); move Agweb to /Applications, or to ~/Applications if you are not an admin, first"
         }
         return nil
     }
