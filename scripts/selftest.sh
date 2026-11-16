@@ -696,6 +696,12 @@ check 'button "low ok"' -w xt click e6
 check "Page" -w xt fill e7 123
 check 'button "zip 123"' -w xt click e8
 check "workspace xt closed" -w xt close
+# An app shell, whose body scrolls and its window can't.
+printf '<title>shell</title><style>html{height:100%%;overflow:hidden}body{height:100%%;overflow:auto;margin:0}</style><div style="height:1800px">x</div><iframe style="width:400px;height:900px" src="http://localhost:%s/xtall.html"></iframe>' "$port" >"$dir/xshell.html"
+check "Title: shell" -w xs open "http://127.0.0.1:$port/xshell.html"
+check '^  - button "Low" \[ref=e2\]' -w xs snapshot
+check 'button "low ok"' -w xs click e2
+check "workspace xs closed" -w xs close
 
 echo "== an idle tab nobody watches is hidden; a command wakes it"
 check "Title" -w vis open "$u"

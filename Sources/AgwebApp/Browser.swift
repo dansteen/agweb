@@ -967,18 +967,12 @@ final class Browser {
         // A frame that never answers (mid-navigation) costs at most a few seconds; it then stays an empty iframe.
         let reply = try await tab.call(PageScripts.snapshot, ["target": target], frame: frame, timeout: frame == nil ? 30 : 5)
         let parsed = try JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: Any]
-        if let path, parsed?["path"] as? [Int] != path { throw Failure("the frame moved") }
+        // Before anything is thrown away: the refs it handed out are taken either way.
         if let next = parsed?["next"] as? Int { tab.workspace.refSeed = max(tab.workspace.refSeed, next) }
+        if let path, parsed?["path"] as? [Int] != path { throw Failure("the frame moved") }
         let tree = parsed?["tree"] as? String ?? ""
         let frames = parsed?["frames"] as? [[String: Any]] ?? []
-        if let frame {
-            // A line's own ref ends it (before [focused]); one in its text is the page's words. An iframe without a
-            // role has a ref but no line.
-            for line in tree.split(separator: "\n") {
-                if let match = line.firstMatch(of: #/\[ref=(e\d+)\](?: \[focused\])?$/#) { tab.frameRefs[String(match.output.1)] = frame }
-            }
-            for inner in frames { if let ref = inner["ref"] as? String { tab.frameRefs[ref] = frame } }
-        }
+        if let frame { for ref in parsed?["refs"] as? [String] ?? [] { tab.frameRefs[ref] = frame } }
         guard !frames.isEmpty else { return (parsed?["doc"] as? String ?? "", tree) }
         if handles == nil {
             // All at once: a page may have dozens of frames, and one mid-navigation takes the whole timeout.
@@ -1275,13 +1269,19 @@ final class Browser {
         guard var frame = tab.frameRefs[target], result != "no size" else { return result }
         let json = try await tab.call(PageScripts.box, ["target": target])
         let box = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Double] ?? [:]
-        var point = ["x": (box["x"] ?? 0) + (box["width"] ?? 0) / 2, "y": (box["y"] ?? 0) + (box["height"] ?? 0) / 2]
+        let size = ["width": box["width"] ?? 0, "height": box["height"] ?? 0]
+        var point = ["x": (box["x"] ?? 0) + size["width"]! / 2, "y": (box["y"] ?? 0) + size["height"]! / 2]
+        var moved = false
         while true {
-            let json = try await tab.call(PageScripts.revealAt, ["target": frame.element, "at": point], frame: frame.parent)
-            point = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Double] ?? [:]
-            guard let parent = frame.parent else { return result }
+            let json = try await tab.call(PageScripts.revealAt, ["target": frame.element, "at": point, "size": size], frame: frame.parent)
+            let spot = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] ?? [:]
+            point = ["x": spot["x"] as? Double ?? 0, "y": spot["y"] as? Double ?? 0]
+            moved = moved || spot["moved"] as? Bool == true
+            guard let parent = frame.parent else { break }
             frame = parent
         }
+        // The frame's own answer saw the page before it scrolled.
+        return moved ? "scrolled" : result
     }
 
     private func locate(_ tab: Tab, _ target: String, scroll: Bool = true, instant: Bool = true) async throws -> Spot {

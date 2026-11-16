@@ -187,7 +187,8 @@ public enum PageScripts {
     public static let snapshot = find + """
     const root = target ? find(target) : null;
     for (const [ref, weak] of W.refs) if (!weak.deref()) W.refs.delete(ref);
-    const lines = [], frames = [];
+    // `shown`: the refs on lines, for the app to tell a frame's refs from the page's.
+    const lines = [], frames = [], shown = [];
     let truncated = false;
     const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'svg', 'HEAD']);
     const leaf = new Set(['link', 'button', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'slider', 'heading', 'img', 'switch', 'tab', 'menuitem', 'option',
@@ -249,7 +250,9 @@ public enum PageScripts {
       }
       line += ` [ref=${ref}]`;
       if (node === document.activeElement) line += ' [focused]';
-      if (!emit(line) || crossFrame(node, depth + 1)) return;
+      if (!emit(line)) return;
+      shown.push(ref);
+      if (crossFrame(node, depth + 1)) return;
       if (node.tagName === 'SELECT') {
         for (const option of node.options) {
           emit(`${'  '.repeat(depth + 1)}- option ${JSON.stringify(clean(option.label))}${option.selected ? ' [selected]' : ''}`);
@@ -260,10 +263,14 @@ public enum PageScripts {
     };
     // A cross-origin frame (Stripe's has role=presentation) shows as a marker line the app replaces with the frame's
     // own snapshot; its iframe's ref places the frame on screen.
+    const isCrossFrame = (node) => {
+      if (!['IFRAME', 'FRAME'].includes(node.tagName) || !node.contentWindow) return false;
+      try { return !node.contentDocument; } catch { return true; }
+    };
     const crossFrame = (node, depth) => {
-      if (!['IFRAME', 'FRAME'].includes(node.tagName) || !node.contentWindow || childrenOf(node).length) return false;
+      if (!isCrossFrame(node)) return false;
       const path = framePath(node.contentWindow);
-      if (path && emit(`${'  '.repeat(depth)}\\u0001${frames.length}`)) frames.push({ path, ref: refOf(node) });
+      if (path && emit(`${'  '.repeat(depth)}\\u0001${frames.length}`)) { frames.push({ path, ref: refOf(node) }); shown.push(refOf(node)); }
       return true;
     };
     // Inside a leaf (a button, a link, a combobox) its text is already the name, so only elements with a role
@@ -286,13 +293,13 @@ public enum PageScripts {
     };
     const roled = function* (node) {
       if (node.nodeType !== Node.ELEMENT_NODE) return;
-      if (controlRole(node) || ['IFRAME', 'FRAME'].includes(node.tagName)) { yield node; return; }
+      if (controlRole(node) || isCrossFrame(node)) { yield node; return; }
       for (const child of childrenOf(node)) yield* roled(child);
     };
     if (root) visit(root, 0); else walk(document.body || document.documentElement, 0);
     if (truncated) lines.push(`- (truncated at \(maxSnapshotLines) lines; use eval to read the rest)`);
     if (root && !lines.length && (skip.has(root.tagName) || !root.checkVisibility({ visibilityProperty: true }))) lines.push('- (hidden on the page, so no tree; eval reads it)');
-    return JSON.stringify({ tree: lines.join('\\n'), next: W.next, doc: W.doc, frames, path: framePath(window) });
+    return JSON.stringify({ tree: lines.join('\\n'), next: W.next, doc: W.doc, frames, refs: shown, path: framePath(window) });
     """
 
     /// The frame's path in the frame tree (see `framePath`), to tell which cross-origin frame a handle is.
@@ -303,23 +310,48 @@ public enum PageScripts {
     /// Scrolls whatever holds the iframe so `at`, a point in its content, shows; returns where that point is then in this
     /// document's top viewport. A cross-origin frame's own scrollIntoView never scrolls the page around it.
     public static let revealAt = find + """
-    const el = find(target), r = rectOf(el), style = el.ownerDocument.defaultView.getComputedStyle(el);
-    let x = r.x + el.clientLeft + parseFloat(style.paddingLeft) + at.x, y = r.y + el.clientTop + parseFloat(style.paddingTop) + at.y;
-    const scrolls = (n) => /auto|scroll|overlay/.test(getComputedStyle(n).overflow) && (n.scrollHeight > n.clientHeight || n.scrollWidth > n.clientWidth);
-    for (let n = el.parentElement; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
-      if (!scrolls(n)) continue;
-      const b = n.getBoundingClientRect(), top = b.top + n.clientTop, left = b.left + n.clientLeft;
-      const [x0, y0] = [n.scrollLeft, n.scrollTop];
-      if (y < top || y > top + n.clientHeight) n.scrollTop += y - (top + n.clientHeight / 2);
-      if (x < left || x > left + n.clientWidth) n.scrollLeft += x - (left + n.clientWidth / 2);
-      x -= n.scrollLeft - x0;
-      y -= n.scrollTop - y0;
+    // A box of `size` at `at` in the iframe's content, in that document's viewport; each scroller holding the iframe
+    // (through shadow hosts and same-origin frames, a body that scrolls included) scrolls it fully into view, to the
+    // middle as the page's own targets go.
+    const el = find(target), style = el.ownerDocument.defaultView.getComputedStyle(el), r = el.getBoundingClientRect();
+    const box = { x: r.left + el.clientLeft + parseFloat(style.paddingLeft) + at.x - size.width / 2,
+                  y: r.top + el.clientTop + parseFloat(style.paddingTop) + at.y - size.height / 2 };
+    let moved = false;
+    // How far to scroll one axis so the box shows within [start, start + length].
+    const delta = (from, extent, start, length) =>
+      extent <= length ? (from < start || from + extent > start + length ? from + extent / 2 - (start + length / 2) : 0)
+                       : (from > start || from + extent < start + length ? from - start : 0);
+    const scroll = (scroller, dx, dy, read) => {
+      if (!dx && !dy) return;
+      const [x0, y0] = read();
+      scroller.scrollBy({ left: dx, top: dy, behavior: 'instant' });
+      const [x1, y1] = read();
+      box.x -= x1 - x0;
+      box.y -= y1 - y0;
+      moved ||= x1 !== x0 || y1 !== y0;
+    };
+    for (let n = el; n; ) {
+      const doc = n.ownerDocument, win = doc.defaultView;
+      const up = n.assignedSlot || n.parentElement || n.getRootNode().host;
+      if (up) {
+        if (up !== doc.scrollingElement && /auto|scroll|overlay/.test(win.getComputedStyle(up).overflow)) {
+          const b = up.getBoundingClientRect();
+          scroll(up, delta(box.x, size.width, b.left + up.clientLeft, up.clientWidth), delta(box.y, size.height, b.top + up.clientTop, up.clientHeight),
+                 () => [up.scrollLeft, up.scrollTop]);
+        }
+        n = up;
+        continue;
+      }
+      // The top of a document: its window, then out to the iframe holding it, while that one is same-origin.
+      scroll(win, delta(box.x, size.width, 0, win.innerWidth), delta(box.y, size.height, 0, win.innerHeight), () => [win.scrollX, win.scrollY]);
+      const f = win.frameElement;
+      if (!f) break;
+      const fb = f.getBoundingClientRect(), fs = f.ownerDocument.defaultView.getComputedStyle(f);
+      box.x += fb.left + f.clientLeft + parseFloat(fs.paddingLeft);
+      box.y += fb.top + f.clientTop + parseFloat(fs.paddingTop);
+      n = f;
     }
-    const [x0, y0] = [scrollX, scrollY];
-    if (y < 0 || y > innerHeight || x < 0 || x > innerWidth) {
-      scrollBy({ left: x < 0 || x > innerWidth ? x - innerWidth / 2 : 0, top: y < 0 || y > innerHeight ? y - innerHeight / 2 : 0, behavior: 'instant' });
-    }
-    return JSON.stringify({ x: x - (scrollX - x0), y: y - (scrollY - y0) });
+    return JSON.stringify({ x: box.x + size.width / 2, y: box.y + size.height / 2, moved });
     """
 
     /// Where an iframe's content starts in its document's top viewport: frame content there is offset by this.
