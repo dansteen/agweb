@@ -363,6 +363,7 @@ final class Browser {
             let tab = workspace.current ?? addTab(to: workspace)
             await wake(tab)
             if let url = args.first { try await tab.goto(try Address.url(url)) } else { try await tab.loadIfPending() }
+            tab.entrySeen = tab.webView.backForwardList.currentItem
             return describe(tab)
         default:
             break
@@ -464,6 +465,11 @@ final class Browser {
         // A tab reopened at launch loads on first use.
         if request.command != "goto" { try await tab.loadIfPending() }
         let webView = tab.webView
+        // Otherwise a go-back from there lands on a page the agent never saw, with nothing saying why.
+        if let seen = tab.entrySeen, let entry = webView.backForwardList.currentItem, entry !== seen {
+            tab.events.append("the tab moved since your last command, to \(tab.currentURL) (a click in the window or the page itself); agweb history lists the way")
+        }
+        defer { tab.entrySeen = webView.backForwardList.currentItem }
         let instant = options["instant"] != nil
         if options["js"] == nil {
             let targets = request.command == "drag" ? Array(args.prefix(2)) : Self.actsOnTarget.contains(request.command) ? Array(args.prefix(1)) : []
@@ -480,11 +486,15 @@ final class Browser {
             webView.reload()
             await tab.settle()
         case "go-back":
-            webView.goBack()
+            guard webView.goBack() != nil else { return describe(tab, note: "no earlier page in this tab, so go-back did nothing") }
             await tab.settle()
         case "go-forward":
-            webView.goForward()
+            guard webView.goForward() != nil else { return describe(tab, note: "no later page in this tab, so go-forward did nothing") }
             await tab.settle()
+        case "history":
+            // WebKit leaves out, and go-back skips, a page that moved on or pushed an entry by script without a click.
+            let length = (try? await tab.call("return String(history.length)", world: .page, timeout: 2)).flatMap { Int($0) }
+            return describe(tab) + "\n" + Self.history(webView.backForwardList, length: length)
         case "snapshot":
             let target = args.first ?? ""
             let snapshot = try await snapshotTree(tab, target)
@@ -1218,6 +1228,19 @@ final class Browser {
               let spot = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Double],
               let x = spot["x"], let y = spot["y"] else { return start + "; run any command again then for its spot" }
         return start + ": mousemove \(Int(x.rounded())) \(Int(y.rounded())), then mousedown and mouseup. A named profile (-p) keeps the pass"
+    }
+
+    /// The tab's back-forward list, oldest first, numbered from the current entry: -1 is where go-back leads.
+    private static func history(_ list: WKBackForwardList, length: Int?) -> String {
+        guard let current = list.currentItem else { return "### History\n(empty: the tab has loaded nothing)" }
+        let back = list.backList, entries = back + [current] + list.forwardList
+        let hidden = (length ?? 0) - entries.count
+        return "### History\n" + entries.enumerated().map { index, item in
+            let offset = index - back.count
+            let redirect = item.initialURL == item.url ? "" : " (asked for \(item.initialURL.absoluteString))"
+            return "- \(offset > 0 ? "+" : "")\(offset)\(offset == 0 ? " (current)" : ""): [\(item.title ?? "")](\(item.url.absoluteString))\(redirect)"
+        }.joined(separator: "\n")
+            + (hidden > 0 ? "\n- Note: \(hidden) more entr\(hidden == 1 ? "y is" : "ies are") hidden and skipped by go-back: pages that moved on by script without a click" : "")
     }
 
     private func describe(_ tab: Tab, note: String? = nil) -> String {

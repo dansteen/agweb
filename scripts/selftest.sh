@@ -278,6 +278,25 @@ check "Page" -w ev eval "() => { const b = document.createElement('button'); b.t
 check 'button "Long word word word word word word word word word word word word word word word word word word word word word word word…"' -w ev snapshot
 check '^BUTTON$' -w ev --raw eval '(el) => el.tagName' 'role=button[name="Long word word word word word word word word word word word word word word word word word word word word word word word…"]'
 check "closed" -w ev close
+# history lists the tab's entries; go-back says when it has nowhere to go, and the next command when something else moved the tab.
+check "Page" -w hist open "$u"
+check "no earlier page in this tab" -w hist go-back
+check "index.html?next" -w hist click 'text=Next page'
+check "(current): \[.*\](.*index.html?next)" -w hist history
+check "- -1: \[.*\]($u)$" -w hist history
+check "Page" -w hist eval "() => { setTimeout(() => location.assign('$u?moved'), 100) }"
+# Not a command meanwhile: it would count as having seen the move.
+sleep 1
+check "the tab moved since your last command, to .*?moved" -w hist go-back
+check "+1: .*?moved" -w hist history
+# The agent's own navigations are no move.
+check "Page" -w hist open "$u?again"
+lacks "the tab moved" -w hist reload
+lacks "the tab moved" -w hist goto "$u?gone"
+lacks "the tab moved" -w hist go-back
+check "Page" -w hist eval "location.href = '$u?evalnav'"
+lacks "the tab moved" -w hist history
+check "closed" -w hist close
 check "Page" -w alpha check 'text=Remember me'
 check "Page" -w alpha check '#r2'
 check '\[true,true\]' -w alpha eval '[cb.checked, r2.checked]'

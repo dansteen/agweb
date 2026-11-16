@@ -385,6 +385,9 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     @ObservationIgnored var challengedURL: URL?
     var challenged: Bool { challengedURL != nil && webView.url == challengedURL }
     @ObservationIgnored var events: [String] = []
+    /// The history entry the tab was on when the last command here ended: a different one at the next command means
+    /// something else moved the tab (a click in the window, the page itself).
+    @ObservationIgnored var entrySeen: WKBackForwardListItem?
     /// Keys and a button the agent is holding down (keydown, mousedown).
     @ObservationIgnored var held = NativeInput.Held()
     /// A fixed viewport from `resize`, in CSS pixels; nil fills the window.

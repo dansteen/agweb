@@ -1,6 +1,6 @@
 public enum Commands {
     public static let all = [
-        "open", "goto", "reload", "go-back", "go-forward", "snapshot", "find", "text", "click", "dblclick", "check", "uncheck", "drag",
+        "open", "goto", "reload", "go-back", "go-forward", "history", "snapshot", "find", "text", "click", "dblclick", "check", "uncheck", "drag",
         "hover", "mousemove", "mousedown", "mouseup", "mousewheel", "fill", "select", "type", "press", "keydown", "keyup",
         "upload", "download", "eval", "highlight", "scroll-into-view", "screenshot", "pdf", "resize", "emulate", "wait", "video-start", "video-stop",
         "console", "requests", "request", "request-headers", "request-body", "response-headers", "response-body", "route",
@@ -12,7 +12,7 @@ public enum Commands {
     /// Names agents reach for that mean something agweb spells differently.
     static let guesses = [
         "tabs": "tab-list", "tab": "tab-list", "list-tabs": "tab-list", "select-tab": "tab-select", "switch-tab": "tab-select",
-        "switch": "tab-select", "sessions": "list", "sleep": "wait", "network": "requests", "navigate": "goto", "back": "go-back",
+        "switch": "tab-select", "sessions": "list", "sleep": "wait", "network": "requests", "navigate": "goto", "back": "go-back", "back-forward": "history", "back-forward-list": "history",
         "forward": "go-forward", "evaluate": "eval", "markdown": "text", "content": "text", "read": "text", "search": "find", "grep": "find", "triple-click": "click", "scroll": "mousewheel",
         "upgrade": "update", "scroll-to": "scroll-into-view", "scrollintoview": "scroll-into-view", "scroll-into-view-if-needed": "scroll-into-view",
     ]
