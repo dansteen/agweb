@@ -1,6 +1,7 @@
 import AppKit
 import AgwebCore
 import Security
+import Synchronization
 
 /// Check for Updates and `agweb update`: only when the person asks, never on its own. Reads the latest GitHub
 /// release, and on request downloads its Agweb.dmg, checks the app in it is signed by the same Developer ID team as
@@ -51,9 +52,18 @@ enum Updater {
         return nil
     }
 
+    /// One install at a time: the first to finish restarts Agweb, killing any other mid-way with its image still
+    /// mounted. Held after a swap too, since this process then runs on top of the new bundle until it restarts.
+    private static let busy = Mutex(false)
+
     /// Downloads and checks the release, swaps it in for this bundle and returns; the caller restarts.
     static func install(_ release: Release) async throws {
         if let blocker = blocker() { throw Failure(blocker) }
+        guard busy.withLock({ held in defer { held = true }; return !held }) else {
+            throw Failure("an update is already being installed, or is waiting for Agweb to restart")
+        }
+        var swapped = false
+        defer { if !swapped { busy.withLock { $0 = false } } }
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("agweb-update-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: work) }
@@ -71,6 +81,7 @@ enum Updater {
         guard version == release.version else { throw Failure("the downloaded app is \(version), not \(release.version)") }
         // An atomic swap: the running process keeps its mapped files, and the next launch gets the new bundle.
         _ = try FileManager.default.replaceItemAt(Bundle.main.bundleURL, withItemAt: staged)
+        swapped = true
     }
 
     /// Starts the swapped-in app once this process is gone, in the background as the CLI launches it, on this root.

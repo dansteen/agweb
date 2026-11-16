@@ -64,11 +64,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// restarts. Never checks by itself.
     @objc func checkForUpdates(_ sender: Any?) {
         let window = browser.mainWindow.window
+        // A sheet on a closed or minimized window shows nowhere. This is the person's own click, so the window may
+        // come forward, checked again when the answer arrives.
+        func present(_ alert: NSAlert, _ handler: ((NSApplication.ModalResponse) -> Void)? = nil) {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            if !window.isVisible { window.makeKeyAndOrderFront(nil) }
+            alert.beginSheetModal(for: window, completionHandler: handler)
+        }
         func tell(_ title: String, _ text: String) {
             let alert = NSAlert()
             alert.messageText = title
             alert.informativeText = text
-            alert.beginSheetModal(for: window)
+            present(alert)
         }
         Task { @MainActor in
             let release: Updater.Release
@@ -87,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Update and Restart")
             alert.addButton(withTitle: "Release Notes")
             alert.addButton(withTitle: "Not Now")
-            alert.beginSheetModal(for: window) { [browser] response in
+            present(alert) { [browser] response in
                 switch response {
                 case .alertFirstButtonReturn:
                     Task { @MainActor in
