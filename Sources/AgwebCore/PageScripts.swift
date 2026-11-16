@@ -237,7 +237,7 @@ public enum PageScripts {
       if (node.getAttribute('aria-expanded') === 'true') line += ' [expanded]';
       if (node.disabled) line += ' [disabled]';
       // A password or card someone typed by hand must not reach an agent's transcript.
-      if (node.type === 'password' || /^cc-(number|csc|exp)/.test(node.autocomplete) || W.secrets?.has(node)) { if (node.value) line += ' [value=<hidden>]'; }
+      if (node.type === 'password' || /\\bcc-(number|csc|exp)/.test(node.autocomplete) || W.secrets?.has(node)) { if (node.value) line += ' [value=<hidden>]'; }
       else if (['textbox', 'searchbox', 'combobox'].includes(role) && node.tagName !== 'SELECT' && node.value) line += ` [value=${JSON.stringify(clean(node.value))}]`;
       // A custom select (mat-select, a div with role=combobox) shows its choice as its text, not a value.
       else if (role === 'combobox' && !('value' in node)) {
@@ -286,18 +286,40 @@ public enum PageScripts {
     };
     const roled = function* (node) {
       if (node.nodeType !== Node.ELEMENT_NODE) return;
-      if (controlRole(node)) { yield node; return; }
+      if (controlRole(node) || ['IFRAME', 'FRAME'].includes(node.tagName)) { yield node; return; }
       for (const child of childrenOf(node)) yield* roled(child);
     };
     if (root) visit(root, 0); else walk(document.body || document.documentElement, 0);
     if (truncated) lines.push(`- (truncated at \(maxSnapshotLines) lines; use eval to read the rest)`);
     if (root && !lines.length && (skip.has(root.tagName) || !root.checkVisibility({ visibilityProperty: true }))) lines.push('- (hidden on the page, so no tree; eval reads it)');
-    return JSON.stringify({ tree: lines.join('\\n'), next: W.next, doc: W.doc, frames });
+    return JSON.stringify({ tree: lines.join('\\n'), next: W.next, doc: W.doc, frames, path: framePath(window) });
     """
 
     /// The frame's path in the frame tree (see `framePath`), to tell which cross-origin frame a handle is.
     public static let framePath = find + """
     return JSON.stringify(framePath(window));
+    """
+
+    /// Scrolls whatever holds the iframe so `at`, a point in its content, shows; returns where that point is then in this
+    /// document's top viewport. A cross-origin frame's own scrollIntoView never scrolls the page around it.
+    public static let revealAt = find + """
+    const el = find(target), r = rectOf(el), style = el.ownerDocument.defaultView.getComputedStyle(el);
+    let x = r.x + el.clientLeft + parseFloat(style.paddingLeft) + at.x, y = r.y + el.clientTop + parseFloat(style.paddingTop) + at.y;
+    const scrolls = (n) => /auto|scroll|overlay/.test(getComputedStyle(n).overflow) && (n.scrollHeight > n.clientHeight || n.scrollWidth > n.clientWidth);
+    for (let n = el.parentElement; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      if (!scrolls(n)) continue;
+      const b = n.getBoundingClientRect(), top = b.top + n.clientTop, left = b.left + n.clientLeft;
+      const [x0, y0] = [n.scrollLeft, n.scrollTop];
+      if (y < top || y > top + n.clientHeight) n.scrollTop += y - (top + n.clientHeight / 2);
+      if (x < left || x > left + n.clientWidth) n.scrollLeft += x - (left + n.clientWidth / 2);
+      x -= n.scrollLeft - x0;
+      y -= n.scrollTop - y0;
+    }
+    const [x0, y0] = [scrollX, scrollY];
+    if (y < 0 || y > innerHeight || x < 0 || x > innerWidth) {
+      scrollBy({ left: x < 0 || x > innerWidth ? x - innerWidth / 2 : 0, top: y < 0 || y > innerHeight ? y - innerHeight / 2 : 0, behavior: 'instant' });
+    }
+    return JSON.stringify({ x: x - (scrollX - x0), y: y - (scrollY - y0) });
     """
 
     /// Where an iframe's content starts in its document's top viewport: frame content there is offset by this.

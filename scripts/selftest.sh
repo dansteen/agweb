@@ -686,6 +686,16 @@ fails 'covered by <div#xveil>' -w xo click e5 --timeout=0
 check "Page" -w xo eval "() => pay.remove()"
 fails 'its frame reloaded or closed; take a new snapshot' -w xo click e5
 check "workspace xo closed" -w xo close
+# A frame taller than the window, whose own scrolling can't move the page; one with role=presentation in a table cell.
+printf '<title>tall</title><iframe style="width:400px;height:2500px" src="http://localhost:%s/xtall.html"></iframe><table><tr><td>Card<iframe role="presentation" style="height:60px" src="http://localhost:%s/xzip.html"></iframe></td></tr></table>' "$port" "$port" >"$dir/xlong.html"
+printf '<div style="height:2200px">x</div><button onclick="this.textContent = \x27low ok\x27">Low</button>' >"$dir/xtall.html"
+check "Title: tall" -w xt open "http://127.0.0.1:$port/xlong.html"
+check '^  - button "Low" \[ref=e6\]' -w xt snapshot
+check '^      - textbox "ZIP" \[ref=e7\]' -w xt snapshot
+check 'button "low ok"' -w xt click e6
+check "Page" -w xt fill e7 123
+check 'button "zip 123"' -w xt click e8
+check "workspace xt closed" -w xt close
 
 echo "== an idle tab nobody watches is hidden; a command wakes it"
 check "Title" -w vis open "$u"

@@ -902,17 +902,21 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
 
     /// Every frame below the page, through WebKit's private frame tree: cross-origin ones can't be reached from the page.
     func subframes() async -> [WKFrameInfo] {
-        let selector = NSSelectorFromString("_frames:")
+        let selector = NSSelectorFromString("_frames:"), childFrames = NSSelectorFromString("childFrames"), info = NSSelectorFromString("info")
         guard webView.responds(to: selector) else { return [] }
         typealias Frames = @convention(c) (AnyObject, Selector, @escaping @convention(block) (AnyObject?) -> Void) -> Void
         let call = unsafeBitCast(webView.method(for: selector), to: Frames.self)
-        let root: AnyObject? = await withCheckedContinuation { continuation in
-            call(webView, selector) { node in continuation.resume(returning: node) }
+        // A stuck web process may never answer; then no frame is reachable, as before.
+        let root: AnyObject? = try? await withTimeout(2, "frame tree") { [webView] in
+            await withCheckedContinuation { continuation in
+                call(webView, selector) { node in continuation.resume(returning: node) }
+            }
         }
         func below(_ node: AnyObject) -> [WKFrameInfo] {
-            let children = node.perform(NSSelectorFromString("childFrames"))?.takeUnretainedValue() as? [AnyObject] ?? []
+            guard node.responds(to: childFrames) else { return [] }
+            let children = node.perform(childFrames)?.takeUnretainedValue() as? [AnyObject] ?? []
             return children.flatMap { child in
-                (child.perform(NSSelectorFromString("info"))?.takeUnretainedValue() as? WKFrameInfo).map { [$0] + below(child) } ?? []
+                (child.responds(to: info) ? child.perform(info)?.takeUnretainedValue() as? WKFrameInfo : nil).map { [$0] + below(child) } ?? []
             }
         }
         return root.map(below) ?? []

@@ -774,7 +774,7 @@ final class Browser {
         if windowHidden { throw Failure(MainWindow.notRendering) }
         let scale = tab.webView.pageZoom * tab.webView.magnification
         if let target {
-            if let frame = tab.frameRefs[target] { _ = try await reveal(tab, frame.element, instant: true) }
+            if tab.frameRefs[target] != nil { _ = try await reveal(tab, target, instant: true) }
             let json = try await tab.call(PageScripts.box, ["target": target])
             let box = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Double] ?? [:]
             let origin = try await origin(tab, of: tab.frameRefs[target])
@@ -962,22 +962,32 @@ final class Browser {
 
     /// One frame's tree with each cross-origin frame in it put in under its iframe, one after another so refs stay
     /// unique. `handles`: the frames below the page by path, looked up once, when the first one shows.
-    private func snapshotTree(_ tab: Tab, _ target: String, in frame: Frame?, handles: inout [[Int]: WKFrameInfo]?) async throws -> (doc: String, tree: String) {
+    /// `path`: where the frame should be; one that moved since (an iframe added above it) is left out, not misplaced.
+    private func snapshotTree(_ tab: Tab, _ target: String, in frame: Frame?, handles: inout [[Int]: WKFrameInfo]?, path: [Int]? = nil) async throws -> (doc: String, tree: String) {
         // A frame that never answers (mid-navigation) costs at most a few seconds; it then stays an empty iframe.
         let reply = try await tab.call(PageScripts.snapshot, ["target": target], frame: frame, timeout: frame == nil ? 30 : 5)
         let parsed = try JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: Any]
+        if let path, parsed?["path"] as? [Int] != path { throw Failure("the frame moved") }
         if let next = parsed?["next"] as? Int { tab.workspace.refSeed = max(tab.workspace.refSeed, next) }
         let tree = parsed?["tree"] as? String ?? ""
-        if let frame {
-            for match in tree.matches(of: #/\[ref=(e\d+)\]/#) { tab.frameRefs[String(match.output.1)] = frame }
-        }
         let frames = parsed?["frames"] as? [[String: Any]] ?? []
+        if let frame {
+            // A line's own ref ends it (before [focused]); one in its text is the page's words. An iframe without a
+            // role has a ref but no line.
+            for line in tree.split(separator: "\n") {
+                if let match = line.firstMatch(of: #/\[ref=(e\d+)\](?: \[focused\])?$/#) { tab.frameRefs[String(match.output.1)] = frame }
+            }
+            for inner in frames { if let ref = inner["ref"] as? String { tab.frameRefs[ref] = frame } }
+        }
         guard !frames.isEmpty else { return (parsed?["doc"] as? String ?? "", tree) }
         if handles == nil {
+            // All at once: a page may have dozens of frames, and one mid-navigation takes the whole timeout.
+            let asked = await tab.subframes().map { info in
+                (info, Task { try? await tab.call(PageScripts.framePath, frame: Frame(info: info, parent: nil, element: ""), timeout: 2) })
+            }
             var found: [[Int]: WKFrameInfo] = [:]
-            for info in await tab.subframes() {
-                if let json = try? await tab.call(PageScripts.framePath, frame: Frame(info: info, parent: nil, element: ""), timeout: 2),
-                   let path = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [Int] { found[path] = info }
+            for (info, answer) in asked {
+                if let json = await answer.value, let path = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [Int] { found[path] = info }
             }
             handles = found
         }
@@ -990,7 +1000,7 @@ final class Browser {
             }
             // A frame that doesn't answer (still loading, or gone) stays an empty iframe, as before.
             guard let path = frames[index]["path"] as? [Int], let info = handles?[path], let element = frames[index]["ref"] as? String,
-                  let inner = try? await snapshotTree(tab, "", in: Frame(info: info, parent: frame, element: element), handles: &handles).tree,
+                  let inner = try? await snapshotTree(tab, "", in: Frame(info: info, parent: frame, element: element), handles: &handles, path: path).tree,
                   !inner.isEmpty else { continue }
             lines += inner.split(separator: "\n").map { String(indent + $0) }
         }
@@ -1260,9 +1270,18 @@ final class Browser {
     /// Brings the element into view unless all of it shows, gliding there unless `instant`; says what it did.
     @discardableResult
     private func reveal(_ tab: Tab, _ target: String, instant: Bool) async throws -> String {
-        // A frame's element: its iframe first, in the page above it.
-        if let frame = tab.frameRefs[target] { _ = try await reveal(tab, frame.element, instant: instant) }
-        return try await tab.call(PageScripts.reveal, ["target": target, "smooth": !instant])
+        let result = try await tab.call(PageScripts.reveal, ["target": target, "smooth": !instant])
+        // In a cross-origin frame that scrolled only the frame: each document above scrolls to the element's spot.
+        guard var frame = tab.frameRefs[target], result != "no size" else { return result }
+        let json = try await tab.call(PageScripts.box, ["target": target])
+        let box = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Double] ?? [:]
+        var point = ["x": (box["x"] ?? 0) + (box["width"] ?? 0) / 2, "y": (box["y"] ?? 0) + (box["height"] ?? 0) / 2]
+        while true {
+            let json = try await tab.call(PageScripts.revealAt, ["target": frame.element, "at": point], frame: frame.parent)
+            point = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Double] ?? [:]
+            guard let parent = frame.parent else { return result }
+            frame = parent
+        }
     }
 
     private func locate(_ tab: Tab, _ target: String, scroll: Bool = true, instant: Bool = true) async throws -> Spot {
