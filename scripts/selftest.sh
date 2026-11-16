@@ -667,6 +667,25 @@ check 'text "Side text"' -w fs wait --text='Side text'
 check "Page" -w fs click 'text=Side button'
 check '"side"' -w fs eval 'window.clicked'
 check "workspace fs closed" -w fs close
+# Cross-origin frames (127.0.0.1 and localhost are different sites), one inside the other, below the fold: a card
+# field that shows the number back in groups, as Stripe's does.
+printf '<title>checkout</title><div style="height:1500px">spacer</div><iframe id="pay" title="Payment" style="width:420px;height:220px;border:4px solid" src="http://localhost:%s/xcard.html"></iframe>' "$port" >"$dir/xpay.html"
+printf '<style>body{padding:10px}</style><input id="num" aria-label="Card number"><span id="shown"></span><iframe title="ZIP frame" style="margin-left:30px;width:300px;height:60px" src="http://127.0.0.1:%s/xzip.html"></iframe><script>num.oninput = () => shown.textContent = num.value.replace(/(\\d{4})(?=\\d)/g, "$1 ")</script>' "$port" >"$dir/xcard.html"
+printf '<input id="zip" aria-label="ZIP"><button onclick="this.textContent = \x27zip \x27 + zip.value">Zip</button>' >"$dir/xzip.html"
+check "Title: checkout" -w xo open "http://127.0.0.1:$port/xpay.html"
+check '^  - textbox "Card number" \[ref=e2\]' -w xo snapshot
+check '^    - textbox "ZIP" \[ref=e4\]' -w xo snapshot
+check "Page" -w xo fill e2 --secret-cmd 'echo 4242424242424242'
+lacks "4242" -w xo snapshot
+check "^16 http://localhost:$port\$" -w xo --raw eval "el => el.value.length + ' ' + origin" e2
+check "Page" -w xo click e4
+check "Page" -w xo type 90210
+check 'button "zip 90210"' -w xo click e5
+check "Page" -w xo eval "() => { const d = document.createElement('div'); d.id = 'xveil'; d.style = 'position:fixed;inset:0'; document.body.append(d) }"
+fails 'covered by <div#xveil>' -w xo click e5 --timeout=0
+check "Page" -w xo eval "() => pay.remove()"
+fails 'its frame reloaded or closed; take a new snapshot' -w xo click e5
+check "workspace xo closed" -w xo close
 
 echo "== an idle tab nobody watches is hidden; a command wakes it"
 check "Title" -w vis open "$u"

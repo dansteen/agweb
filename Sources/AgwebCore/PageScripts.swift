@@ -156,6 +156,18 @@ public enum PageScripts {
       }
       return matches[0];
     };
+    // Where a window sits in the frame tree: its index among its parent's frames at each level, from the top. The
+    // same numbers work across origins, so a cross-origin frame and the iframe showing it give the same path.
+    const framePath = (w) => {
+      const path = [];
+      for (; w !== w.parent; w = w.parent) {
+        let i = 0;
+        while (i < w.parent.length && w.parent[i] !== w) i++;
+        if (i === w.parent.length) return null;
+        path.unshift(i);
+      }
+      return path;
+    };
     // The element's rect in the top page's viewport, through same-origin iframes.
     const rectOf = (el) => {
       const r = el.getBoundingClientRect();
@@ -175,7 +187,7 @@ public enum PageScripts {
     public static let snapshot = find + """
     const root = target ? find(target) : null;
     for (const [ref, weak] of W.refs) if (!weak.deref()) W.refs.delete(ref);
-    const lines = [];
+    const lines = [], frames = [];
     let truncated = false;
     const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'svg', 'HEAD']);
     const leaf = new Set(['link', 'button', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'slider', 'heading', 'img', 'switch', 'tab', 'menuitem', 'option',
@@ -213,7 +225,7 @@ public enum PageScripts {
       if (style.display === 'contents' || node.tagName === 'BODY' || node.tagName === 'FRAMESET') { walk(node, depth); return; }
       if (node.getClientRects().length === 0 || style.visibility === 'hidden') return;
       const role = controlRole(node);
-      if (!role) { walk(node, depth); return; }
+      if (!role) { if (!crossFrame(node, depth)) walk(node, depth); return; }
       const ref = refOf(node);
       let line = `${'  '.repeat(depth)}- ${role}`;
       // A container's text shows as its children, so only a leaf is named by its content.
@@ -224,8 +236,8 @@ public enum PageScripts {
       if (node.getAttribute('aria-selected') === 'true') line += ' [selected]';
       if (node.getAttribute('aria-expanded') === 'true') line += ' [expanded]';
       if (node.disabled) line += ' [disabled]';
-      // A password someone typed by hand must not reach an agent's transcript.
-      if (node.type === 'password' || W.secrets?.has(node)) { if (node.value) line += ' [value=<hidden>]'; }
+      // A password or card someone typed by hand must not reach an agent's transcript.
+      if (node.type === 'password' || /^cc-(number|csc|exp)/.test(node.autocomplete) || W.secrets?.has(node)) { if (node.value) line += ' [value=<hidden>]'; }
       else if (['textbox', 'searchbox', 'combobox'].includes(role) && node.tagName !== 'SELECT' && node.value) line += ` [value=${JSON.stringify(clean(node.value))}]`;
       // A custom select (mat-select, a div with role=combobox) shows its choice as its text, not a value.
       else if (role === 'combobox' && !('value' in node)) {
@@ -237,7 +249,7 @@ public enum PageScripts {
       }
       line += ` [ref=${ref}]`;
       if (node === document.activeElement) line += ' [focused]';
-      if (!emit(line)) return;
+      if (!emit(line) || crossFrame(node, depth + 1)) return;
       if (node.tagName === 'SELECT') {
         for (const option of node.options) {
           emit(`${'  '.repeat(depth + 1)}- option ${JSON.stringify(clean(option.label))}${option.selected ? ' [selected]' : ''}`);
@@ -245,6 +257,14 @@ public enum PageScripts {
       } else {
         walk(node, depth + 1, leaf.has(role));
       }
+    };
+    // A cross-origin frame (Stripe's has role=presentation) shows as a marker line the app replaces with the frame's
+    // own snapshot; its iframe's ref places the frame on screen.
+    const crossFrame = (node, depth) => {
+      if (!['IFRAME', 'FRAME'].includes(node.tagName) || !node.contentWindow || childrenOf(node).length) return false;
+      const path = framePath(node.contentWindow);
+      if (path && emit(`${'  '.repeat(depth)}\\u0001${frames.length}`)) frames.push({ path, ref: refOf(node) });
+      return true;
     };
     // Inside a leaf (a button, a link, a combobox) its text is already the name, so only elements with a role
     // show: a search box in a dialog the page made a button, the options of an open custom select.
@@ -272,7 +292,18 @@ public enum PageScripts {
     if (root) visit(root, 0); else walk(document.body || document.documentElement, 0);
     if (truncated) lines.push(`- (truncated at \(maxSnapshotLines) lines; use eval to read the rest)`);
     if (root && !lines.length && (skip.has(root.tagName) || !root.checkVisibility({ visibilityProperty: true }))) lines.push('- (hidden on the page, so no tree; eval reads it)');
-    return JSON.stringify({ tree: lines.join('\\n'), next: W.next, doc: W.doc });
+    return JSON.stringify({ tree: lines.join('\\n'), next: W.next, doc: W.doc, frames });
+    """
+
+    /// The frame's path in the frame tree (see `framePath`), to tell which cross-origin frame a handle is.
+    public static let framePath = find + """
+    return JSON.stringify(framePath(window));
+    """
+
+    /// Where an iframe's content starts in its document's top viewport: frame content there is offset by this.
+    public static let frameOrigin = find + """
+    const el = find(target), r = rectOf(el), style = el.ownerDocument.defaultView.getComputedStyle(el);
+    return JSON.stringify({ x: r.x + el.clientLeft + parseFloat(style.paddingLeft), y: r.y + el.clientTop + parseFloat(style.paddingTop) });
     """
 
     /// Markdown through Defuddle (loaded into this world first): one element converted whole, or the page's main

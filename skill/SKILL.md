@@ -105,11 +105,10 @@ agweb -w t snapshot e9 # [value="Alpha"] confirms the choice
 
 A custom combobox is not a field: `fill` says "is not a field". Open it, then click the option (the click waits for it to show).
 
-**Iframes and frames.** Same-origin frames are in the snapshot and every target reaches into them. A cross-origin frame shows as an empty `iframe`: open its URL in a tab instead.
+**Iframes and frames.** Frames are in the snapshot, cross-origin ones too (a Stripe card field, a login widget). Every target reaches into a same-origin frame; in a cross-origin one, use its refs. `type` and `press` go to the focused frame.
 
 ```sh
-agweb -w t --raw eval "[...document.querySelectorAll('iframe')].map(f => f.src).join('\n')"
-agweb -w t tab-new https://widget.example.com/embed
+agweb -w t fill e31 --secret-cmd 'pass show card/number' # a card field in Stripe's iframe; grouped digits are hidden too
 ```
 
 **Dialogs, popups, new tabs.**

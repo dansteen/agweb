@@ -385,6 +385,8 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     @ObservationIgnored var challengedURL: URL?
     var challenged: Bool { challengedURL != nil && webView.url == challengedURL }
     @ObservationIgnored var events: [String] = []
+    /// The cross-origin frame each snapshot ref inside one lives in; a ref missing here is in the page itself.
+    @ObservationIgnored var frameRefs: [String: Frame] = [:]
     /// Where the tab was when the last command here ended. A different history entry at the next command, or a new
     /// document at another URL in the same entry (`location.replace`), means something else moved the tab: a click in
     /// the window, the page itself. A URL change inside the page (`replaceState`) doesn't count: apps do it all the time.
@@ -660,6 +662,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         commits += 1
+        frameRefs.removeAll()
         console.removeAll()
         unreadErrors = 0
     }
@@ -868,17 +871,22 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
 
     // MARK: JavaScript
 
-    /// Runs a function body; the body must return a string.
+    /// Runs a function body; the body must return a string. It runs in `frame`, else in the frame of the `target`
+    /// argument's ref, else in the page.
     /// `timeout`: a script sent to a page as it is replaced can get no answer at all; polls use a short one.
-    func call(_ body: String, _ arguments: [String: Any] = [:], world: WKContentWorld? = nil, timeout: Double = 30) async throws -> String {
+    func call(_ body: String, _ arguments: [String: Any] = [:], world: WKContentWorld? = nil, frame: Frame? = nil, timeout: Double = 30) async throws -> String {
         let world = world ?? Tab.agentWorld
+        let info = (frame ?? (arguments["target"] as? String).flatMap { frameRefs[$0] })?.info
         var arguments = arguments
         if arguments["refSeed"] == nil { arguments["refSeed"] = workspace.refSeed }
         return try await withTimeout(timeout, "page script") { [webView, arguments, workspace] in
             try await withCheckedThrowingContinuation { continuation in
-                webView.callAsyncJavaScript(body, arguments: arguments, in: nil, in: world) { result in
+                webView.callAsyncJavaScript(body, arguments: arguments, in: info, in: world) { result in
                     switch result {
                     case .success(let value): continuation.resume(returning: value as? String ?? "\(value)")
+                    case .failure(let error as WKError) where error.code == .javaScriptInvalidFrameTarget:
+                        continuation.resume(throwing: Failure("\((arguments["target"] as? String).map { "ref \($0) not found: " } ?? "")"
+                                                              + "its frame reloaded or closed; take a new snapshot"))
                     case .failure(let error):
                         let message = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription
                         // An error listing matches hands out refs too; the next page must not reuse them.
@@ -892,6 +900,33 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         }
     }
 
+    /// Every frame below the page, through WebKit's private frame tree: cross-origin ones can't be reached from the page.
+    func subframes() async -> [WKFrameInfo] {
+        let selector = NSSelectorFromString("_frames:")
+        guard webView.responds(to: selector) else { return [] }
+        typealias Frames = @convention(c) (AnyObject, Selector, @escaping @convention(block) (AnyObject?) -> Void) -> Void
+        let call = unsafeBitCast(webView.method(for: selector), to: Frames.self)
+        let root: AnyObject? = await withCheckedContinuation { continuation in
+            call(webView, selector) { node in continuation.resume(returning: node) }
+        }
+        func below(_ node: AnyObject) -> [WKFrameInfo] {
+            let children = node.perform(NSSelectorFromString("childFrames"))?.takeUnretainedValue() as? [AnyObject] ?? []
+            return children.flatMap { child in
+                (child.perform(NSSelectorFromString("info"))?.takeUnretainedValue() as? WKFrameInfo).map { [$0] + below(child) } ?? []
+            }
+        }
+        return root.map(below) ?? []
+    }
+
+    /// The frame below the page that has the keyboard focus, if one does: keys typed go there.
+    func focusedFrame() async -> Frame? {
+        let selector = NSSelectorFromString("_isFocused")
+        typealias IsFocused = @convention(c) (AnyObject, Selector) -> Bool
+        return await subframes().first { info in
+            info.responds(to: selector) && unsafeBitCast(info.method(for: selector), to: IsFocused.self)(info, selector)
+        }.map { Frame(info: $0, parent: nil, element: "") }
+    }
+
     func snapshot(_ config: WKSnapshotConfiguration? = nil, timeout: Double = 10) async throws -> NSImage {
         try await withTimeout(timeout, "snapshot") { [webView] in
             try await withCheckedThrowingContinuation { continuation in
@@ -902,6 +937,19 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
                 }
             }
         }
+    }
+}
+
+/// A cross-origin frame: scripts run in it through its handle. `element` is the iframe's ref in `parent` (nil: the page),
+/// which places the frame on screen.
+final class Frame {
+    let info: WKFrameInfo
+    let parent: Frame?
+    let element: String
+    init(info: WKFrameInfo, parent: Frame?, element: String) {
+        self.info = info
+        self.parent = parent
+        self.element = element
     }
 }
 
