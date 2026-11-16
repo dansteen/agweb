@@ -81,18 +81,19 @@ agweb -w t wait 1500 # fixed pause; last resort
 **Reading data.**
 
 ```sh
-agweb -w t --raw text # an article as markdown (a page with no article comes back whole; without --raw the reply says so)
+agweb -w t --raw text # an article as markdown; a listing or other page with no article comes back whole
 agweb -w t --raw text e12 # one element as markdown; on a feed or listing, the list's container reads cleaner than the page
-agweb -w t --raw text --all # the whole page: the article can leave out plans, prices or sidebars (without --raw the reply notes when it kept under half the words)
+agweb -w t --raw text --all # the whole page: the article can leave out plans, prices or sidebars
 agweb -w t snapshot e12 # structure: rows, cells, links, with refs to act on
 agweb -w t --raw eval "[...document.querySelectorAll('table tr')].map(r => [...r.cells].map(c => c.innerText.trim()).join(' | ')).join('\n')"
+agweb -w t --raw eval "[...document.querySelectorAll('article')].map(a => ({title: a.querySelector('h2')?.innerText, url: a.querySelector('a')?.href}))" # records as JSON: each field read inside its row, so a missing one can't shift the others
 agweb -w t --raw eval "(el) => el.value" e5 # what a snapshot hides: values, attributes, computed style
 agweb -w t --raw eval "(el) => el.closest('.form-field').innerText" e9 # a custom control's shown choice
 agweb -w t --json eval "document.title" # {ok, result, page} for scripts
 agweb -w t find "Invoice"                              # just the lines holding the text, with refs and the lines above them
 ```
 
-`--raw` prints just the answer, strings unquoted. A snapshot stops at 2000 lines and says so: snapshot a subtree or use `eval`. Lists and tables: `snapshot` the container for refs, `eval` for clean rows. A ref also works as a function argument in `eval`. `js` is the same command as `eval`, for sandboxes that refuse the word.
+`--raw` prints just the answer, strings unquoted; Events and notes go to stderr. A snapshot stops at 2000 lines and says so: snapshot a subtree or use `eval`. Lists and tables: `snapshot` the container for refs, `eval` for clean rows. A ref also works as a function argument in `eval`. `js` is the same command as `eval`, for sandboxes that refuse the word.
 
 **Dropdowns and custom selects.**
 

@@ -32,6 +32,14 @@ public enum Output {
         return body
     }
 
+    /// What a `--raw` reply leaves out of the answer, for stderr: the Events and the Page notes.
+    public static func rawNotes(_ text: String) -> [String] {
+        sections(text).flatMap { section in
+            section.title == "Events" ? section.body.split(separator: "\n")
+                : section.title == "Page" ? section.body.split(separator: "\n").filter { $0.hasPrefix("- Note: ") || $0.hasPrefix("- Console: ") } : []
+        }.map { String($0.dropFirst(2)) }
+    }
+
     /// One JSON object: `ok`, then each section by lowercased title. JSON bodies stay JSON, `- Key: value` lists
     /// become objects, anything else is a string. Output that is already a JSON object passes through.
     public static func json(_ text: String, ok: Bool) -> String {

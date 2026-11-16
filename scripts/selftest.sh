@@ -190,7 +190,20 @@ check "Screenshot" -w alpha screenshot --full-page --filename="$dir/full.jpg"
 check '^\[Next page\](/index.html?next)$' -w alpha --raw text 'a'
 check "$dir/page.md" -w alpha text --filename="$dir/page.md"
 check "no article here" -w alpha text
-lacks "no article" -w alpha --raw text
+check "^agweb: Note: no article here" -w alpha --raw text
+# A listing whose main part keeps under half the page comes back whole; a page that says it is an article stays one.
+links=$(for i in $(seq 1 60); do printf '<li><a href="/s%d">Story number %d about something new today</a></li>' $i $i; done)
+para="<p>$(for i in $(seq 1 90); do printf 'word%d ' $i; done)</p>"
+printf '<html><head><title>List</title>%s</head><body><nav><ul>%s</ul></nav><main><article><h1>Top</h1>%s</article></main></body></html>' '' "$links" "$para" > "$dir/listing.html"
+printf '<html><head><title>Story</title>%s</head><body><nav><ul>%s</ul></nav><main><article><h1>Top</h1>%s</article></main></body></html>' '<meta property="og:type" content="article">' "$links" "$para" > "$dir/story.html"
+check "Page" -w lst open "http://127.0.0.1:$port/listing.html"
+check "no article here, so this is the whole page" -w lst text
+check "agweb: Note: no article here" -w lst --raw text
+check "Story number 60" -w lst --raw text
+check "Page" -w lst goto "http://127.0.0.1:$port/story.html"
+check "main content only: [0-9]* of [0-9]* words on the page; text --all for all of it" -w lst text
+lacks "Story number 60" -w lst --raw text
+check "closed" -w lst close
 grep -q 'Press me' "$dir/page.md" || fail "text --filename did not write the page"
 check "Page" -w alpha eval "() => { const d = document.createElement('div'); d.id = 'veiled'; d.hidden = true; d.textContent = 'Hidden waiting state'; document.body.append(d) }"
 lacks "Hidden waiting state" -w alpha text
@@ -266,6 +279,9 @@ check '\["inner","inner"\]' -w alpha eval 'log.filter(x => x === "inner")'
 fails 'matches .* elements: button "Press me" \[ref=e2\]; ' -w alpha click 'role=button'
 check '^- form' -w alpha snapshot '#f'
 lacks 'Press me' -w alpha snapshot '#f'
+# CSS compares a URL attribute as written; the miss names the element whose resolved URL matched.
+fails 'no element matches .*CSS matches action as the page writes it ("go"), not the resolved URL: form' -w alpha snapshot "form[action=\"${u%/*}/go\"]"
+check 'hidden on the page, so no tree; eval reads it' -w alpha --raw snapshot '#tok'
 check '^inner$' -w alpha --raw eval '(el) => el.id' 'role=button[name="inner"]'
 # eval hands over a target in a shadow root and in an iframe inside an iframe.
 check "Page" -w ev open "$u"
@@ -289,6 +305,17 @@ check "Page" -w hist eval "() => { setTimeout(() => location.assign('$u?moved'),
 sleep 1
 check "the tab moved since your last command, to .*?moved" -w hist go-back
 check "+1: .*?moved" -w hist history
+# --raw keeps only the answer, so the move goes to stderr.
+check "Page" -w hist eval "() => { setTimeout(() => location.assign('$u?moved2'), 100) }"
+sleep 1
+check "agweb: the tab moved since your last command, to .*?moved2" -w hist --raw eval "1"
+# A script replacing the page counts too; a URL change inside the page doesn't.
+check "Page" -w hist eval "() => { setTimeout(() => location.replace('$u?swapped'), 100) }"
+sleep 1
+check "the tab moved since your last command, to .*?swapped" -w hist eval "1"
+check "Page" -w hist eval "() => { setTimeout(() => history.replaceState(null, '', '?state'), 100) }"
+sleep 1
+lacks "the tab moved" -w hist eval "1"
 # The agent's own navigations are no move.
 check "Page" -w hist open "$u?again"
 lacks "the tab moved" -w hist reload

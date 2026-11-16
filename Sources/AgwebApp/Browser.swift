@@ -363,7 +363,7 @@ final class Browser {
             let tab = workspace.current ?? addTab(to: workspace)
             await wake(tab)
             if let url = args.first { try await tab.goto(try Address.url(url)) } else { try await tab.loadIfPending() }
-            tab.entrySeen = tab.webView.backForwardList.currentItem
+            tab.markSeen()
             return describe(tab)
         default:
             break
@@ -466,10 +466,10 @@ final class Browser {
         if request.command != "goto" { try await tab.loadIfPending() }
         let webView = tab.webView
         // Otherwise a go-back from there lands on a page the agent never saw, with nothing saying why.
-        if let seen = tab.entrySeen, let entry = webView.backForwardList.currentItem, entry !== seen {
+        if tab.movedSinceSeen {
             tab.events.append("the tab moved since your last command, to \(tab.currentURL) (a click in the window or the page itself); agweb history lists the way")
         }
-        defer { tab.entrySeen = webView.backForwardList.currentItem }
+        defer { tab.markSeen() }
         let instant = options["instant"] != nil
         if options["js"] == nil {
             let targets = request.command == "drag" ? Array(args.prefix(2)) : Self.actsOnTarget.contains(request.command) ? Array(args.prefix(1)) : []
@@ -1270,7 +1270,7 @@ final class Browser {
         }
         if tab.unreadErrors > 0 {
             out += "\n- Console: \(tab.unreadErrors) new error\(tab.unreadErrors == 1 ? "" : "s") (agweb console error)"
-            if !workspace.rawReply { tab.unreadErrors = 0 }
+            tab.unreadErrors = 0
         }
         return out
     }

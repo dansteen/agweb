@@ -385,9 +385,16 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     @ObservationIgnored var challengedURL: URL?
     var challenged: Bool { challengedURL != nil && webView.url == challengedURL }
     @ObservationIgnored var events: [String] = []
-    /// The history entry the tab was on when the last command here ended: a different one at the next command means
-    /// something else moved the tab (a click in the window, the page itself).
-    @ObservationIgnored var entrySeen: WKBackForwardListItem?
+    /// Where the tab was when the last command here ended. A different history entry at the next command, or a new
+    /// document at another URL in the same entry (`location.replace`), means something else moved the tab: a click in
+    /// the window, the page itself. A URL change inside the page (`replaceState`) doesn't count: apps do it all the time.
+    @ObservationIgnored private var seen: (entry: WKBackForwardListItem?, commits: Int, url: URL?)?
+    @ObservationIgnored private var commits = 0
+    func markSeen() { seen = (webView.backForwardList.currentItem, commits, webView.url) }
+    var movedSinceSeen: Bool {
+        guard let seen, let entry = webView.backForwardList.currentItem else { return false }
+        return entry !== seen.entry || (commits != seen.commits && webView.url != seen.url)
+    }
     /// Keys and a button the agent is holding down (keydown, mousedown).
     @ObservationIgnored var held = NativeInput.Held()
     /// A fixed viewport from `resize`, in CSS pixels; nil fills the window.
@@ -652,6 +659,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     private func isExpected(_ navigation: WKNavigation?) -> Bool { expected == nil || navigation === expected }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        commits += 1
         console.removeAll()
         unreadErrors = 0
     }

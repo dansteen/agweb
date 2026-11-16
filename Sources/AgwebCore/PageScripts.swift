@@ -106,6 +106,22 @@ public enum PageScripts {
     };
     const label = (el) => `${roleOf(el) || el.tagName.toLowerCase()} ${JSON.stringify(nameOf(el) || clean(el.innerText).slice(0, 40))} [ref=${refOf(el)}]`;
     const list = (els) => els.slice(0, 5).map(label).join('; ') + (els.length > 5 ? `; and ${els.length - 5} more` : '');
+    // A CSS miss on a URL attribute: CSS compares the attribute as the page wrote it (HN's form has action="comment"),
+    // while eval's form.action is the resolved URL.
+    const urlHint = (selector) => {
+      const m = /\\[\\s*(href|src|action|formaction)\\s*([\\^$*]?=)\\s*(?:"([^"]*)"|'([^']*)'|([^\\]\\s]+))\\s*\\]/i.exec(selector);
+      if (!m) return '';
+      const attr = m[1].toLowerCase(), op = m[2], value = m[3] ?? m[4] ?? m[5];
+      // Only a full URL with a host: a[href^="http"] means links written absolute, and every relative one resolves to http.
+      if (!/:\\/\\/[^/]/.test(value)) return '';
+      const prop = { href: 'href', src: 'src', action: 'action', formaction: 'formAction' }[attr];
+      const hit = (url) => typeof url === 'string' && (op === '=' ? url === value : op === '^=' ? url.startsWith(value) : op === '$=' ? url.endsWith(value) : url.includes(value));
+      let els = [];
+      try { els = [...document.querySelectorAll(selector.slice(0, m.index) + `[${attr}]` + selector.slice(m.index + m[0].length))]; } catch { return ''; }
+      els = els.filter(el => hit(el[prop]));
+      if (!els.length) return '';
+      return `; CSS matches ${attr} as the page writes it (${JSON.stringify(els[0].getAttribute(attr))}), not the resolved URL: ${list(els)}`;
+    };
     // `<target> >> nth=N` picks one of several matches, counting from 0; -1 is the last.
     const find = (target) => {
       const nth = /^(.*?)\\s*>>\\s*nth=(-?\\d+)$/.exec(target);
@@ -125,7 +141,7 @@ public enum PageScripts {
       if (!/^(role|text)=/.test(target)) {
         // The first one a person can see: a page often keeps a hidden copy first (a collapsed quick-login form).
         const els = document.querySelectorAll(target);
-        if (!els.length) throw new Error(`no element matches ${target}`);
+        if (!els.length) throw new Error(`no element matches ${target}` + urlHint(target));
         return [...els].find(visible) ?? els[0];
       }
       const matches = matchesOf(target);
@@ -255,6 +271,7 @@ public enum PageScripts {
     };
     if (root) visit(root, 0); else walk(document.body || document.documentElement, 0);
     if (truncated) lines.push(`- (truncated at \(maxSnapshotLines) lines; use eval to read the rest)`);
+    if (root && !lines.length && (skip.has(root.tagName) || !root.checkVisibility({ visibilityProperty: true }))) lines.push('- (hidden on the page, so no tree; eval reads it)');
     return JSON.stringify({ tree: lines.join('\\n'), next: W.next, doc: W.doc });
     """
 
@@ -301,7 +318,13 @@ public enum PageScripts {
     // The article can leave out what a reader came for, such as a pricing page's plans: say how much it kept,
     // counting both sides the same way.
     const article = bare(page.content);
-    return reply((page.title ? `# ${page.title}\\n\\n` : '') + md(article), false, words(article.content.textContent), words(document.body.innerText));
+    const kept = words(article.content.textContent), shown = words(document.body.innerText);
+    // A listing or docs index kept under half loses its rows, so it comes back whole, unless the page says it is an
+    // article or one of Defuddle's site extractors (Hacker News, Reddit, GitHub) read it.
+    const declared = document.querySelector('meta[property="og:type"]')?.content === 'article' ||
+      [...document.querySelectorAll('script[type="application/ld+json"]')].some(s => /"@type"\\s*:\\s*\\[?\\s*"(\\w*Article|BlogPosting)"/.test(s.textContent));
+    if (shown > 300 && kept * 2 < shown && !declared && !page.extractorType) return reply(body(), true);
+    return reply((page.title ? `# ${page.title}\\n\\n` : '') + md(article), false, kept, shown);
     """
 
     // Returns the element's center in CSS pixels (`reveal` brings it into view first), what actually sits there (at

@@ -97,7 +97,7 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
                                 to go (default 1000); 0: don't wait; wait: 30000
 --filename=PATH                 snapshot, text, eval, request and response-body: write the answer to a file instead
 --download-dir=DIR              where downloads nobody named go (default $AGWEB_DOWNLOAD_DIR, else .agweb/)
---raw                           print only the answer (eval's value, a snapshot), strings unquoted
+--raw                           print only the answer (eval's value, a snapshot), strings unquoted; events and notes go to stderr
 --json                          print the reply as one JSON object
 -w NAME, --workspace=NAME       default $AGWEB_WORKSPACE, else "default"
 -p NAME, --profile=NAME         default $AGWEB_PROFILE, else a fresh profile
@@ -206,6 +206,7 @@ func absolute(_ path: String) -> String {
 /// Prints a reply in the chosen shape and exits with its status.
 func finish(_ output: String, ok: Bool) -> Never {
     let text = json ? Output.json(output, ok: ok) : raw && ok ? Output.raw(output) : output
+    if raw && ok { for note in Output.rawNotes(output) { FileHandle.standardError.write(Data("agweb: \(note)\n".utf8)) } }
     if ok { print(text) } else if json { print(text) } else { fail(text) }
     exit(ok ? 0 : 1)
 }
