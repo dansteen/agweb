@@ -296,6 +296,12 @@ lacks "the tab moved" -w hist goto "$u?gone"
 lacks "the tab moved" -w hist go-back
 check "Page" -w hist eval "location.href = '$u?evalnav'"
 lacks "the tab moved" -w hist history
+# Only the entries around the current one, saying how many are left out.
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do "$agweb" -w hist goto "$u?n=$i" >/dev/null; done
+check "Note: [0-9]* earlier not shown; --max-results=100 for all" -w hist history
+lacks "^- -13: " -w hist history
+check "^- -13: " -w hist history --max-results=100
+lacks "^- -8: " -w hist history --max-results=8
 check "closed" -w hist close
 check "Page" -w alpha check 'text=Remember me'
 check "Page" -w alpha check '#r2'

@@ -15,6 +15,7 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
   open [url]                    start the workspace (-p to reuse a named profile's logins)
   goto <url> | reload | go-back | go-forward
   history                       the tab's back-forward list: where go-back (-1) and go-forward (+1) lead, current is 0
+                                (the 10 around the current one; --max-results=N for more)
   snapshot [target]             page (or one element) as a tree with [ref=eN] handles; same-origin iframes included
                                 (--diff: only what changed since the last snapshot; an element keeps its ref)
   find <text>                   the snapshot lines containing text, with the lines around them (--max-results=20)

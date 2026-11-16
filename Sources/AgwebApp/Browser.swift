@@ -494,7 +494,8 @@ final class Browser {
         case "history":
             // WebKit leaves out, and go-back skips, a page that moved on or pushed an entry by script without a click.
             let length = (try? await tab.call("return String(history.length)", world: .page, timeout: 2)).flatMap { Int($0) }
-            return describe(tab) + "\n" + Self.history(webView.backForwardList, length: length)
+            guard let limit = Int(options["max-results"] ?? "10"), limit > 0 else { throw Failure("--max-results is a number above 0") }
+            return describe(tab) + "\n" + Self.history(webView.backForwardList, length: length, limit: limit)
         case "snapshot":
             let target = args.first ?? ""
             let snapshot = try await snapshotTree(tab, target)
@@ -1231,15 +1232,23 @@ final class Browser {
     }
 
     /// The tab's back-forward list, oldest first, numbered from the current entry: -1 is where go-back leads.
-    private static func history(_ list: WKBackForwardList, length: Int?) -> String {
+    /// The tab's back-forward list, oldest first, numbered from the current entry: -1 is where go-back leads. Only the
+    /// `limit` entries around the current one; WebKit keeps up to 100.
+    private static func history(_ list: WKBackForwardList, length: Int?, limit: Int) -> String {
         guard let current = list.currentItem else { return "### History\n(empty: the tab has loaded nothing)" }
         let back = list.backList, entries = back + [current] + list.forwardList
         let hidden = (length ?? 0) - entries.count
-        return "### History\n" + entries.enumerated().map { index, item in
-            let offset = index - back.count
+        // Centred on the current entry, sliding to the ends of the list when one side runs short.
+        let start = max(0, min(back.count - (limit - 1) / 2, entries.count - limit)), end = min(entries.count, start + limit)
+        let earlier = start, later = entries.count - end
+        let lines = entries[start..<end].enumerated().map { index, item in
+            let offset = start + index - back.count
             let redirect = item.initialURL == item.url ? "" : " (asked for \(item.initialURL.absoluteString))"
             return "- \(offset > 0 ? "+" : "")\(offset)\(offset == 0 ? " (current)" : ""): [\(item.title ?? "")](\(item.url.absoluteString))\(redirect)"
-        }.joined(separator: "\n")
+        }
+        let left = [earlier > 0 ? "\(earlier) earlier" : nil, later > 0 ? "\(later) later" : nil].compactMap { $0 }
+        return "### History\n" + lines.joined(separator: "\n")
+            + (left.isEmpty ? "" : "\n- Note: \(left.joined(separator: " and ")) not shown; --max-results=100 for all")
             + (hidden > 0 ? "\n- Note: \(hidden) more entr\(hidden == 1 ? "y is" : "ies are") hidden and skipped by go-back: pages that moved on by script without a click" : "")
     }
 
