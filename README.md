@@ -65,6 +65,16 @@ The click's reply already says what it did, so the agent needs no second snapsho
 
 `agweb help` lists every command. Settings (⌘,) has text size, dashboard columns, a CPU and memory readout and the ad blocker switch.
 
+## Use from MCP clients (Claude's Chat tab)
+
+Clients that can't run shell commands get agweb as an MCP server: `agweb mcp` serves one tool, `agweb`, that runs any command above in a workspace and returns its reply, with screenshots as images. Add it to `~/Library/Application Support/Claude/claude_desktop_config.json` and restart Claude:
+
+```json
+{ "mcpServers": { "agweb": { "command": "/usr/local/bin/agweb", "args": ["mcp"] } } }
+```
+
+A chat gets a browser and nothing more: `quit`, `close-all`, `update`, the installs, `profile-delete` and `--secret-cmd`/`--secret-file` are refused, and every file it reads or writes (uploads, screenshots, downloads, local pages) stays in one folder, `~/Library/Application Support/agweb/files` unless `AGWEB_MCP_FILES` names another (set it under `"env"` in the config). Coding agents with a shell should keep using the CLI and the skill.
+
 ## Compared with playwright-cli
 
 Same commands where possible, so agents already know them; a Playwright name it lacks suggests its own (`scroll-to` → `scroll-into-view`). On top:

@@ -87,6 +87,9 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
                                 only (Settings switches every workspace); pages opened directly always load
   install-cli [--check]         link /usr/local/bin/agweb to this app's CLI (also Help menu); --check says what is there
   install-skill [--check]       link the agent skill for Claude Code and Codex to this app's (also Help menu)
+  mcp                           serve agweb as an MCP server on stdin and stdout, for clients with no shell (Claude's
+                                Chat tab): one tool running these commands; files only in $AGWEB_MCP_FILES (default
+                                <root>/files); quit, close-all, update, installs, profile-delete and secrets refused
   update [--check]              install the latest release from GitHub and restart, every workspace reopening
                                 (--check: only say whether one is out); agweb never updates by itself
   quit                          stop agweb
@@ -332,6 +335,57 @@ func appBundle() -> String? {
     guard let exe = Bundle.main.executableURL?.resolvingSymlinksInPath() else { return nil }
     let app = exe.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     return app.pathExtension == "app" ? app.path : nil
+}
+
+/// `agweb mcp`: an MCP server (MCPServer) that runs each tool call as this CLI, in the files folder, and answers on
+/// stdout. Calls run in parallel (each workspace's commands are still serialized by the app); the app starts on the
+/// first call that needs it, as from a shell.
+if command == "mcp" {
+    let files = URL(fileURLWithPath: env["AGWEB_MCP_FILES"].flatMap { $0.isEmpty ? nil : absolute($0) } ?? Agweb.root.appendingPathComponent("files").path)
+    do { try FileManager.default.createDirectory(at: files, withIntermediateDirectories: true) } catch { fail("cannot create \(files.path): \(error.localizedDescription)") }
+    guard let me = Bundle.main.executableURL else { fail("cannot find the agweb executable") }
+    let version = appBundle().flatMap { NSDictionary(contentsOfFile: $0 + "/Contents/Info.plist")?["CFBundleShortVersionString"] as? String } ?? "unknown"
+    let server = MCPServer(files: files, version: version, usage: usage) { argv in
+        let process = Process(), out = Pipe(), err = Pipe()
+        process.executableURL = me
+        process.arguments = argv
+        process.currentDirectoryURL = files
+        // stdin is the MCP stream; a command must never read from it.
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = out
+        process.standardError = err
+        do { try process.run() } catch { return (false, "Error: cannot run agweb: \(error.localizedDescription)") }
+        // Both pipes at once: a long snapshot fills one while the other waits.
+        final class Box: @unchecked Sendable { var data = Data() }
+        let errors = Box(), read = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            errors.data = err.fileHandleForReading.readDataToEndOfFile()
+            read.signal()
+        }
+        let output = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        read.wait()
+        process.waitUntilExit()
+        let stderr = String(decoding: errors.data, as: UTF8.self).trimmingCharacters(in: .newlines)
+        let ok = process.terminationReason == .exit && process.terminationStatus == 0
+        if ok { return (true, output.trimmingCharacters(in: .newlines) + (stderr.isEmpty ? "" : "\n" + stderr)) }
+        return (false, stderr.isEmpty ? output.trimmingCharacters(in: .newlines) : stderr)
+    }
+    let writing = NSLock(), calls = DispatchGroup()
+    while let line = readLine() {
+        guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+        calls.enter()
+        DispatchQueue.global().async {
+            if let reply = server.reply(to: line) {
+                writing.lock()
+                FileHandle.standardOutput.write(Data((reply + "\n").utf8))
+                writing.unlock()
+            }
+            calls.leave()
+        }
+    }
+    // The client closed stdin: finish what it asked for, then go.
+    calls.wait()
+    exit(0)
 }
 
 func waitForSocket(_ seconds: Double) -> Bool {
